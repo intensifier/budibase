@@ -1,20 +1,14 @@
-import "../../../tests/utilities/TestConfiguration"
-import * as context from ".."
+import { testEnv } from "../../../tests/extra"
+import * as context from "../"
 import { DEFAULT_TENANT_ID } from "../../constants"
-import env from "../../environment"
-
-// must use require to spy index file exports due to known issue in jest
-const dbUtils = require("../../db")
-jest.spyOn(dbUtils, "closeDB")
-jest.spyOn(dbUtils, "dangerousGetDB")
 
 describe("context", () => {
-  beforeEach(() => {
-    jest.clearAllMocks()
-  })
-
   describe("doInTenant", () => {
     describe("single-tenancy", () => {
+      beforeAll(() => {
+        testEnv.singleTenant()
+      })
+
       it("defaults to the default tenant", () => {
         const tenantId = context.getTenantId()
         expect(tenantId).toBe(DEFAULT_TENANT_ID)
@@ -25,22 +19,20 @@ describe("context", () => {
           const db = context.getGlobalDB()
           expect(db.name).toBe("global-db")
         })
-        expect(dbUtils.dangerousGetDB).toHaveBeenCalledTimes(1)
-        expect(dbUtils.closeDB).toHaveBeenCalledTimes(1)
       })
     })
 
     describe("multi-tenancy", () => {
-      beforeEach(() => {
-        env._set("MULTI_TENANCY", 1)
+      beforeAll(() => {
+        testEnv.multiTenant()
       })
 
       it("fails when no tenant id is set", () => {
         const test = () => {
-          let error
+          let error: any
           try {
             context.getTenantId()
-          } catch (e: any) {
+          } catch (e) {
             error = e
           }
           expect(error.message).toBe("Tenant id not found")
@@ -56,10 +48,10 @@ describe("context", () => {
 
       it("fails when no tenant db is set", () => {
         const test = () => {
-          let error
+          let error: any
           try {
             context.getGlobalDB()
-          } catch (e: any) {
+          } catch (e) {
             error = e
           }
           expect(error.message).toBe("Global DB not found")
@@ -85,8 +77,6 @@ describe("context", () => {
           const db = context.getGlobalDB()
           expect(db.name).toBe("test_global-db")
         })
-        expect(dbUtils.dangerousGetDB).toHaveBeenCalledTimes(1)
-        expect(dbUtils.closeDB).toHaveBeenCalledTimes(1)
       })
 
       it("sets the tenant id when nested with same tenant id", async () => {
@@ -121,10 +111,6 @@ describe("context", () => {
             })
           })
         })
-
-        // only 1 db is opened and closed
-        expect(dbUtils.dangerousGetDB).toHaveBeenCalledTimes(1)
-        expect(dbUtils.closeDB).toHaveBeenCalledTimes(1)
       })
 
       it("sets different tenant id inside another context", () => {
@@ -143,6 +129,19 @@ describe("context", () => {
           })
         })
       })
+    })
+  })
+
+  describe("doInScimContext", () => {
+    it("returns true when set", () => {
+      context.doInScimContext(() => {
+        const isScim = context.isScim()
+        expect(isScim).toBe(true)
+      })
+    })
+    it("returns false when not set", () => {
+      const isScim = context.isScim()
+      expect(isScim).toBe(false)
     })
   })
 })

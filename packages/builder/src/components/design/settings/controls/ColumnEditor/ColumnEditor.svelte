@@ -8,20 +8,40 @@
     getSchemaForDatasource,
   } from "builderStore/dataBinding"
   import { currentAsset } from "builderStore"
+  import { getFields } from "helpers/searchFields"
 
   export let componentInstance
   export let value = []
+  export let allowCellEditing = true
+  export let allowReorder = true
 
   const dispatch = createEventDispatcher()
 
   let drawer
   let boundValue
 
+  $: text = getText(value)
   $: datasource = getDatasourceForProvider($currentAsset, componentInstance)
   $: schema = getSchema($currentAsset, datasource)
-  $: options = Object.keys(schema || {})
+  $: options = allowCellEditing
+    ? Object.keys(schema || {})
+    : enrichedSchemaFields?.map(field => field.name)
   $: sanitisedValue = getValidColumns(value, options)
   $: updateBoundValue(sanitisedValue)
+  $: enrichedSchemaFields = getFields(Object.values(schema || {}), {
+    allowLinks: true,
+  })
+
+  const getText = value => {
+    if (!value?.length) {
+      return "All columns"
+    }
+    let text = `${value.length} column`
+    if (value.length !== 1) {
+      text += "s"
+    }
+    return text
+  }
 
   const getSchema = (asset, datasource) => {
     const schema = getSchemaForDatasource(asset, datasource).schema
@@ -67,11 +87,23 @@
   }
 </script>
 
-<ActionButton on:click={open}>Configure columns</ActionButton>
-<Drawer bind:this={drawer} title="Table Columns">
-  <svelte:fragment slot="description">
-    Configure the columns in your table.
-  </svelte:fragment>
+<div class="column-editor">
+  <ActionButton on:click={open}>{text}</ActionButton>
+</div>
+<Drawer bind:this={drawer} title="Columns">
   <Button cta slot="buttons" on:click={save}>Save</Button>
-  <ColumnDrawer slot="body" bind:columns={boundValue} {options} {schema} />
+  <ColumnDrawer
+    slot="body"
+    bind:columns={boundValue}
+    {options}
+    {schema}
+    {allowCellEditing}
+    {allowReorder}
+  />
 </Drawer>
+
+<style>
+  .column-editor :global(.spectrum-ActionButton) {
+    width: 100%;
+  }
+</style>

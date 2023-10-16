@@ -283,27 +283,32 @@
     if (mapInstance) {
       mapInstance.remove()
     }
-    mapInstance = L.map(embeddedMapId, mapOptions)
-    mapMarkerGroup.addTo(mapInstance)
-    candidateMarkerGroup.addTo(mapInstance)
 
-    // Add attribution
-    const cleanAttribution = sanitizeHtml(attribution, {
-      allowedTags: ["a"],
-      allowedAttributes: {
-        a: ["href", "target"],
-      },
-    })
-    L.tileLayer(tileURL, {
-      attribution: "&copy; " + cleanAttribution,
-      zoom,
-    }).addTo(mapInstance)
+    try {
+      mapInstance = L.map(embeddedMapId, mapOptions)
+      mapMarkerGroup.addTo(mapInstance)
+      candidateMarkerGroup.addTo(mapInstance)
 
-    // Add click handler
-    mapInstance.on("click", handleMapClick)
+      // Add attribution
+      const cleanAttribution = sanitizeHtml(attribution, {
+        allowedTags: ["a"],
+        allowedAttributes: {
+          a: ["href", "target"],
+        },
+      })
+      L.tileLayer(tileURL, {
+        attribution: "&copy; " + cleanAttribution,
+        zoom,
+      }).addTo(mapInstance)
 
-    // Reset view
-    resetView()
+      // Add click handler
+      mapInstance.on("click", handleMapClick)
+
+      // Reset view
+      resetView()
+    } catch (e) {
+      console.log("There was a problem with the map", e)
+    }
   }
 
   const handleMapClick = e => {
@@ -373,6 +378,11 @@
   .map-default {
     min-height: 180px;
     min-width: 200px;
+  }
+  .embedded-map :global(a.map-svg-button) {
+    display: flex;
+    justify-content: center;
+    align-items: center;
   }
   .embedded-map :global(.leaflet-top),
   .embedded-map :global(.leaflet-bottom) {

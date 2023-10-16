@@ -17,6 +17,8 @@
   export let columns = []
   export let options = []
   export let schema = {}
+  export let allowCellEditing = true
+  export let allowReorder = true
 
   const flipDurationMs = 150
   let dragDisabled = true
@@ -109,6 +111,7 @@
             {#each columns as column (column.id)}
               <div class="column" animate:flip={{ duration: flipDurationMs }}>
                 <div
+                  class:hide={!allowReorder}
                   class="handle"
                   aria-label="drag-handle"
                   style={dragDisabled ? "cursor: grab" : "cursor: grabbing"}
@@ -123,7 +126,9 @@
                   on:change={e => (column.displayName = e.detail)}
                 />
                 <Input bind:value={column.displayName} placeholder="Label" />
-                <CellEditor bind:column />
+                {#if allowCellEditing}
+                  <CellEditor bind:column />
+                {/if}
                 <Icon
                   name="Close"
                   hoverable
@@ -139,10 +144,10 @@
         <div class="column">
           <div class="wide">
             <Body size="S">
-              By default, all table columns will automatically be shown.
+              By default, all columns will automatically be shown.
               <br />
-              You can manually control which columns are included in your table,
-              and their appearance, by adding them below.
+              You can manually control which columns are included by adding them
+              below.
             </Body>
           </div>
         </div>
@@ -189,6 +194,9 @@
   .handle {
     display: grid;
     place-items: center;
+  }
+  .handle.hide {
+    visibility: hidden;
   }
   .wide {
     grid-column: 2 / -1;

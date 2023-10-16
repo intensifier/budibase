@@ -1,13 +1,20 @@
 <script>
   import { getContext, setContext } from "svelte"
   import { writable } from "svelte/store"
-  import { Heading, Icon } from "@budibase/bbui"
+  import { Heading, Icon, clickOutside } from "@budibase/bbui"
   import { FieldTypes } from "constants"
+  import { Constants } from "@budibase/frontend-core"
   import active from "svelte-spa-router/active"
-  import { RoleUtils } from "@budibase/frontend-core"
 
   const sdk = getContext("sdk")
-  const { routeStore, styleable, linkable, builderStore, currentRole } = sdk
+  const {
+    routeStore,
+    roleStore,
+    styleable,
+    linkable,
+    builderStore,
+    sidePanelStore,
+  } = sdk
   const component = getContext("component")
   const context = getContext("context")
 
@@ -26,6 +33,8 @@
   export let navTextColor
   export let navWidth
   export let pageWidth
+
+  export let embedded = false
 
   const NavigationClasses = {
     Top: "top",
@@ -52,7 +61,7 @@
   })
   setContext("layout", store)
 
-  $: validLinks = getValidLinks(links, $currentRole)
+  $: validLinks = getValidLinks(links, $roleStore)
   $: typeClass = NavigationClasses[navigation] || NavigationClasses.None
   $: navWidthClass = WidthClasses[navWidth || width] || WidthClasses.Large
   $: pageWidthClass = WidthClasses[pageWidth || width] || WidthClasses.Large
@@ -62,33 +71,41 @@
     $context.device.width,
     $context.device.height
   )
+  $: autoCloseSidePanel = !$builderStore.inBuilder && $sidePanelStore.open
+  $: screenId = $builderStore.inBuilder
+    ? `${$builderStore.screen?._id}-screen`
+    : "screen"
+  $: navigationId = $builderStore.inBuilder
+    ? `${$builderStore.screen?._id}-navigation`
+    : "navigation"
 
-  // Scroll navigation into view if selected
+  // Scroll navigation into view if selected.
+  // Memoize into a primitive to avoid spamming this whenever builder store
+  // changes.
+  $: selected =
+    $builderStore.inBuilder &&
+    $builderStore.selectedComponentId?.endsWith("-navigation")
   $: {
-    if (
-      $builderStore.inBuilder &&
-      $builderStore.selectedComponentId === "navigation"
-    ) {
+    if (selected) {
       const node = document.getElementsByClassName("nav-wrapper")?.[0]
       if (node) {
         node.style.scrollMargin = "100px"
         node.scrollIntoView({
           behavior: "smooth",
-          block: "start",
+          block: "nearest",
           inline: "start",
         })
       }
     }
   }
 
-  const getValidLinks = (allLinks, role) => {
+  const getValidLinks = (allLinks, userRoleHierarchy) => {
     // Strip links missing required info
     let validLinks = (allLinks || []).filter(link => link.text && link.url)
-
     // Filter to only links allowed by the current role
-    const priority = RoleUtils.getRolePriority(role)
     return validLinks.filter(link => {
-      return !link.roleId || RoleUtils.getRolePriority(link.roleId) <= priority
+      const role = link.roleId || Constants.Roles.BASIC
+      return userRoleHierarchy?.find(roleId => roleId === role)
     })
   }
 
@@ -136,113 +153,142 @@
 </script>
 
 <div
-  class="layout layout--{typeClass}"
+  class="component {screenId} layout layout--{typeClass}"
   use:styleable={$component.styles}
   class:desktop={!mobile}
   class:mobile={!!mobile}
+  data-id={screenId}
+  data-name="Screen"
+  data-icon="WebPage"
 >
-  {#if typeClass !== "none"}
-    <div
-      class="interactive component navigation"
-      data-id="navigation"
-      data-name="Navigation"
-      data-icon="Link"
-    >
+  <div class="{screenId}-dom screen-wrapper layout-body">
+    {#if typeClass !== "none"}
       <div
-        class="nav-wrapper"
-        class:sticky
-        class:hidden={$routeStore.queryParams?.peek}
-        class:clickable={$builderStore.inBuilder}
-        on:click={$builderStore.inBuilder
-          ? builderStore.actions.clickNav
-          : null}
-        style={navStyle}
+        class="interactive component {navigationId}"
+        data-id={navigationId}
+        data-name="Navigation"
+        data-icon="Visibility"
       >
-        <div class="nav nav--{typeClass} size--{navWidthClass}">
-          <div class="nav-header">
+        <div
+          class="nav-wrapper {navigationId}-dom"
+          class:sticky
+          class:hidden={$routeStore.queryParams?.peek}
+          class:clickable={$builderStore.inBuilder}
+          on:click={$builderStore.inBuilder
+            ? builderStore.actions.selectComponent(navigationId)
+            : null}
+          style={navStyle}
+        >
+          <div class="nav nav--{typeClass} size--{navWidthClass}">
+            <div class="nav-header">
+              {#if validLinks?.length}
+                <div class="burger">
+                  <Icon
+                    hoverable
+                    name="ShowMenu"
+                    on:click={() => (mobileOpen = !mobileOpen)}
+                  />
+                </div>
+              {/if}
+              <div class="logo">
+                {#if !hideLogo}
+                  <img src={logoUrl || "/builder/bblogo.png"} alt={title} />
+                {/if}
+                {#if !hideTitle && title}
+                  <Heading size="S">{title}</Heading>
+                {/if}
+              </div>
+              {#if !embedded}
+                <div class="portal">
+                  <Icon hoverable name="Apps" on:click={navigateToPortal} />
+                </div>
+              {/if}
+            </div>
+            <div
+              class="mobile-click-handler"
+              class:visible={mobileOpen}
+              on:click={() => (mobileOpen = false)}
+            />
             {#if validLinks?.length}
-              <div class="burger">
-                <Icon
-                  hoverable
-                  name="ShowMenu"
-                  on:click={() => (mobileOpen = !mobileOpen)}
-                />
+              <div class="links" class:visible={mobileOpen}>
+                {#each validLinks as { text, url }}
+                  {#if isInternal(url)}
+                    <a
+                      class={FieldTypes.LINK}
+                      href={url}
+                      use:linkable
+                      on:click={close}
+                      use:active={url}
+                    >
+                      {text}
+                    </a>
+                  {:else}
+                    <a
+                      class={FieldTypes.LINK}
+                      href={ensureExternal(url)}
+                      on:click={close}
+                    >
+                      {text}
+                    </a>
+                  {/if}
+                {/each}
+                <div class="close">
+                  <Icon
+                    hoverable
+                    name="Close"
+                    on:click={() => (mobileOpen = false)}
+                  />
+                </div>
               </div>
             {/if}
-            <div class="logo">
-              {#if !hideLogo}
-                <img
-                  src={logoUrl || "https://i.imgur.com/Xhdt1YP.png"}
-                  alt={title}
-                />
-              {/if}
-              {#if !hideTitle && title}
-                <Heading size="S">{title}</Heading>
-              {/if}
-            </div>
-            <div class="portal">
-              <Icon hoverable name="Apps" on:click={navigateToPortal} />
-            </div>
           </div>
-          <div
-            class="mobile-click-handler"
-            class:visible={mobileOpen}
-            on:click={() => (mobileOpen = false)}
-          />
-          {#if validLinks?.length}
-            <div class="links" class:visible={mobileOpen}>
-              {#each validLinks as { text, url }}
-                {#if isInternal(url)}
-                  <a
-                    class={FieldTypes.LINK}
-                    href={url}
-                    use:linkable
-                    on:click={close}
-                    use:active={url}
-                  >
-                    {text}
-                  </a>
-                {:else}
-                  <a
-                    class={FieldTypes.LINK}
-                    href={ensureExternal(url)}
-                    on:click={close}
-                  >
-                    {text}
-                  </a>
-                {/if}
-              {/each}
-              <div class="close">
-                <Icon
-                  hoverable
-                  name="Close"
-                  on:click={() => (mobileOpen = false)}
-                />
-              </div>
-            </div>
-          {/if}
         </div>
       </div>
+    {/if}
+    <div class="main-wrapper">
+      <div class="main size--{pageWidthClass}">
+        <slot />
+      </div>
     </div>
-  {/if}
-  <div class="main-wrapper">
-    <div class="main size--{pageWidthClass}">
-      <slot />
+  </div>
+  <div
+    id="side-panel-container"
+    class:open={$sidePanelStore.open}
+    use:clickOutside={autoCloseSidePanel ? sidePanelStore.actions.close : null}
+    class:builder={$builderStore.inBuilder}
+  >
+    <div class="side-panel-header">
+      <Icon
+        color="var(--spectrum-global-color-gray-600)"
+        name="RailRightClose"
+        hoverable
+        on:click={sidePanelStore.actions.close}
+      />
     </div>
   </div>
 </div>
 
 <style>
   /*  Main components */
+  .layout {
+    height: 100%;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: stretch;
+    z-index: 1;
+    overflow: hidden;
+    position: relative;
+  }
   .component {
     display: contents;
   }
-  .layout {
+  .layout-body {
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
     align-items: stretch;
-    height: 100%;
     flex: 1 1 auto;
     overflow: auto;
     overflow-x: hidden;
@@ -271,6 +317,12 @@
     position: sticky;
     top: 0;
     left: 0;
+  }
+  .layout--top .nav-wrapper {
+    border-bottom: 1px solid var(--spectrum-global-color-gray-300);
+  }
+  .layout--left .nav-wrapper {
+    border-right: 1px solid var(--spectrum-global-color-gray-300);
   }
 
   .nav {
@@ -302,6 +354,43 @@
     align-items: center;
     gap: var(--spacing-xl);
   }
+
+  #side-panel-container {
+    max-width: calc(100vw - 40px);
+    background: var(--spectrum-global-color-gray-50);
+    z-index: 3;
+    padding: var(--spacing-xl);
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    transition: transform 130ms ease-out;
+    position: absolute;
+    width: 400px;
+    right: 0;
+    transform: translateX(100%);
+    height: 100%;
+  }
+  #side-panel-container.builder {
+    transform: translateX(0);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #side-panel-container.open {
+    transform: translateX(0);
+    box-shadow: 0 0 40px 10px rgba(0, 0, 0, 0.1);
+  }
+  #side-panel-container.builder.open {
+    opacity: 1;
+    pointer-events: all;
+  }
+  .side-panel-header {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
   .main-wrapper {
     display: flex;
     flex-direction: row;
@@ -309,10 +398,6 @@
     align-items: stretch;
     flex: 1 1 auto;
     z-index: 1;
-    border-top: 1px solid var(--spectrum-global-color-gray-300);
-  }
-  .layout--none .main-wrapper {
-    border-top: none;
   }
   .main {
     display: flex;
@@ -406,7 +491,7 @@
   }
 
   /* Desktop nav overrides */
-  .desktop.layout--left {
+  .desktop.layout--left .layout-body {
     flex-direction: row;
     overflow: hidden;
   }
@@ -442,6 +527,8 @@
     top: 0;
     left: 0;
     box-shadow: 0 0 8px -1px rgba(0, 0, 0, 0.075);
+    border-bottom: 1px solid var(--spectrum-global-color-gray-300);
+    border-right: none;
   }
 
   /* Show close button in drawer */

@@ -7,6 +7,9 @@ assignees: ''
 
 ---
 
+**Checklist**
+- [ ] I have searched budibase discussions and github issues to check if my issue already exists
+
 **Hosting**
 <!-- Delete as appropriate -->
 - Self
@@ -31,6 +34,9 @@ A clear and concise description of what you expected to happen.
 
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
+  
+**App Export**
+If possible - please attach an export of your budibase application for debugging/reproduction purposes.
 
 **Desktop (please complete the following information):**
  - OS: [e.g. iOS]

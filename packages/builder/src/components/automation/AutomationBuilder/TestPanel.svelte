@@ -2,31 +2,8 @@
   import { Icon, Divider } from "@budibase/bbui"
   import TestDisplay from "./TestDisplay.svelte"
   import { automationStore } from "builderStore"
-  import { ActionStepID } from "constants/backend/automations"
 
   export let automation
-  export let testResults
-
-  let blocks
-
-  $: {
-    blocks = []
-    if (automation) {
-      if (automation.definition.trigger) {
-        blocks.push(automation.definition.trigger)
-      }
-      blocks = blocks
-        .concat(automation.definition.steps || [])
-        .filter(x => x.stepId !== ActionStepID.LOOP)
-    } else if (testResults) {
-      blocks = testResults.steps || []
-    }
-  }
-  $: {
-    if (!testResults) {
-      testResults = $automationStore.selectedAutomation?.testResults
-    }
-  }
 </script>
 
 <div class="title">
@@ -47,7 +24,7 @@
 
 <Divider />
 
-<TestDisplay {automation} {testResults} />
+<TestDisplay {automation} testResults={$automationStore.testResults} />
 
 <style>
   .title {

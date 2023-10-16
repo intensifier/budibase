@@ -1,16 +1,10 @@
-import newRowScreen from "./newRowScreen"
-import rowDetailScreen from "./rowDetailScreen"
 import rowListScreen from "./rowListScreen"
 import createFromScratchScreen from "./createFromScratchScreen"
 
-const allTemplates = tables => [
-  ...newRowScreen(tables),
-  ...rowDetailScreen(tables),
-  ...rowListScreen(tables),
-]
+const allTemplates = datasources => [...rowListScreen(datasources)]
 
 // Allows us to apply common behaviour to all create() functions
-const createTemplateOverride = (frontendState, template) => () => {
+const createTemplateOverride = template => () => {
   const screen = template.create()
   screen.name = screen.props._id
   screen.routing.route = screen.routing.route.toLowerCase()
@@ -18,14 +12,13 @@ const createTemplateOverride = (frontendState, template) => () => {
   return screen
 }
 
-export default (frontendState, tables) => {
+export default datasources => {
   const enrichTemplate = template => ({
     ...template,
-    create: createTemplateOverride(frontendState, template),
+    create: createTemplateOverride(template),
   })
-
   const fromScratch = enrichTemplate(createFromScratchScreen)
-  const tableTemplates = allTemplates(tables).map(enrichTemplate)
+  const tableTemplates = allTemplates(datasources).map(enrichTemplate)
   return [
     fromScratch,
     ...tableTemplates.sort((templateA, templateB) => {

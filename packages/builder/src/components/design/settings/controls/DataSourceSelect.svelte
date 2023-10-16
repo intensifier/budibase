@@ -15,6 +15,8 @@
   import {
     tables as tablesStore,
     queries as queriesStore,
+    viewsV2 as viewsV2Store,
+    views as viewsStore,
   } from "stores/backend"
   import { datasources, integrations } from "stores/backend"
   import BindingBuilder from "components/integration/QueryBindingBuilder.svelte"
@@ -25,6 +27,7 @@
   export let otherSources
   export let showAllQueries
   export let bindings = []
+  export let showDataProviders = true
 
   const dispatch = createEventDispatcher()
   const arrayTypes = ["attachment", "array"]
@@ -38,15 +41,17 @@
     tableId: m._id,
     type: "table",
   }))
-  $: views = $tablesStore.list.reduce((acc, cur) => {
-    let viewsArr = Object.entries(cur.views || {}).map(([key, value]) => ({
-      label: key,
-      name: key,
-      ...value,
-      type: "view",
-    }))
-    return [...acc, ...viewsArr]
-  }, [])
+  $: viewsV1 = $viewsStore.list.map(view => ({
+    ...view,
+    label: view.name,
+    type: "view",
+  }))
+  $: viewsV2 = $viewsV2Store.list.map(view => ({
+    ...view,
+    label: view.name,
+    type: "viewV2",
+  }))
+  $: views = [...(viewsV1 || []), ...(viewsV2 || [])]
   $: queries = $queriesStore.list
     .filter(q => showAllQueries || q.queryVerb === "read" || q.readable)
     .map(query => ({
@@ -69,7 +74,10 @@
       type: "provider",
     }))
   $: links = bindings
+    // Get only link bindings
     .filter(x => x.fieldSchema?.type === "link")
+    // Filter out bindings provided by forms
+    .filter(x => !x.component?.endsWith("/form"))
     .map(binding => {
       const { providerId, readableBinding, fieldSchema } = binding || {}
       const { name, tableId } = fieldSchema || {}
@@ -139,8 +147,12 @@
   }
 
   const openQueryParamsDrawer = () => {
-    tmpQueryParams = value.queryParams
+    tmpQueryParams = { ...value.queryParams }
     drawer.show()
+  }
+
+  const getQueryValue = queries => {
+    return queries.find(q => q._id === value._id) || value
   }
 
   const saveQueryParams = () => {
@@ -167,14 +179,17 @@
         <Layout noPadding gap="XS">
           {#if getQueryParams(value).length > 0}
             <BindingBuilder
-              bind:customParams={tmpQueryParams}
+              customParams={tmpQueryParams}
+              on:change={v => {
+                tmpQueryParams = { ...v.detail }
+              }}
               queryBindings={getQueryParams(value)}
               bind:bindings
             />
           {/if}
           <IntegrationQueryEditor
             height={200}
-            query={value}
+            query={getQueryValue(queries)}
             schema={fetchQueryDefinition(value)}
             datasource={getQueryDatasource(value)}
             editable={false}
@@ -184,11 +199,7 @@
     </Drawer>
   {/if}
 </div>
-<Popover
-  bind:this={dropdownRight}
-  anchor={anchorRight}
-  dataCy={`dataSource-popover-${$store.selectedComponentId}`}
->
+<Popover bind:this={dropdownRight} anchor={anchorRight}>
   <div class="dropdown">
     <div class="title">
       <Heading size="XS">Tables</Heading>
@@ -199,7 +210,7 @@
       {/each}
     </ul>
     {#if views?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">Views</Heading>
       </div>
@@ -210,7 +221,7 @@
       </ul>
     {/if}
     {#if queries?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">Queries</Heading>
       </div>
@@ -226,7 +237,7 @@
       </ul>
     {/if}
     {#if links?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">Relationships</Heading>
       </div>
@@ -237,7 +248,7 @@
       </ul>
     {/if}
     {#if fields?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">Fields</Heading>
       </div>
@@ -248,7 +259,7 @@
       </ul>
     {/if}
     {#if jsonArrays?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">JSON Arrays</Heading>
       </div>
@@ -258,8 +269,8 @@
         {/each}
       </ul>
     {/if}
-    {#if dataProviders?.length}
-      <Divider size="S" />
+    {#if showDataProviders && dataProviders?.length}
+      <Divider />
       <div class="title">
         <Heading size="XS">Data Providers</Heading>
       </div>
@@ -275,7 +286,7 @@
       </ul>
     {/if}
     {#if otherSources?.length}
-      <Divider size="S" />
+      <Divider />
       <div class="title">
         <Heading size="XS">Other</Heading>
       </div>

@@ -25,9 +25,13 @@
     </svg>
   {/if}
   <div class="spectrum-Toast-body" class:actionBody={!!action}>
-    <div class="spectrum-Toast-content">{message || ""}</div>
+    <div class="wrap spectrum-Toast-content">{message || ""}</div>
     {#if action}
-      <ActionButton quiet emphasized on:click={action}>
+      <ActionButton
+        quiet
+        emphasized
+        on:click={() => action(() => dispatch("dismiss"))}
+      >
         <div style="color: white; font-weight: 600;">{actionMessage}</div>
       </ActionButton>
     {/if}
@@ -53,6 +57,10 @@
 </div>
 
 <style>
+  .wrap {
+    overflow-wrap: anywhere;
+  }
+
   .spectrum-Toast {
     pointer-events: all;
   }

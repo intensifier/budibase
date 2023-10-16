@@ -32,6 +32,9 @@
   export let menuItems
   export let showMenu = false
   export let bindings = []
+  export let bindingDrawerLeft
+  export let allowHelpers = true
+  export let customButtonText = null
 
   let fields = Object.entries(object || {}).map(([name, value]) => ({
     name,
@@ -106,7 +109,7 @@
         placeholder={keyPlaceholder}
         readonly={readOnly}
         bind:value={field.name}
-        on:change={changed}
+        on:blur={changed}
       />
       {#if options}
         <Select bind:value={field.value} on:change={changed} {options} />
@@ -114,18 +117,23 @@
         <DrawerBindableInput
           {bindings}
           placeholder="Value"
-          on:change={e => (field.value = e.detail)}
+          on:blur={e => {
+            field.value = e.detail
+            changed()
+          }}
           disabled={readOnly}
           value={field.value}
           allowJS={false}
+          {allowHelpers}
           fillWidth={true}
+          drawerLeft={bindingDrawerLeft}
         />
       {:else}
         <Input
           placeholder={valuePlaceholder}
           readonly={readOnly}
           bind:value={field.value}
-          on:change={changed}
+          on:blur={changed}
         />
       {/if}
       {#if toggle}
@@ -151,9 +159,13 @@
 {/if}
 {#if !readOnly && !noAddButton}
   <div>
-    <ActionButton icon="Add" secondary thin outline on:click={addEntry}
-      >Add{name ? ` ${lowercase(name)}` : ""}</ActionButton
-    >
+    <ActionButton icon="Add" secondary thin outline on:click={addEntry}>
+      {#if customButtonText}
+        {customButtonText}
+      {:else}
+        {`Add${name ? ` ${lowercase(name)}` : ""}`}
+      {/if}
+    </ActionButton>
   </div>
 {/if}
 

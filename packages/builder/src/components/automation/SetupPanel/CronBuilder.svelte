@@ -1,10 +1,15 @@
 <script>
   import { Button, Select, Input, Label } from "@budibase/bbui"
-  import { createEventDispatcher } from "svelte"
+  import { onMount, createEventDispatcher } from "svelte"
+  import { flags } from "stores/backend"
   const dispatch = createEventDispatcher()
 
   export let value
+
   const onChange = e => {
+    if (e.detail === value) {
+      return
+    }
     value = e.detail
     dispatch("change", e.detail)
   }
@@ -29,15 +34,25 @@
       label: "Every Night at Midnight",
       value: "0 0 * * *",
     },
-    {
-      label: "Every Budibase Reboot",
-      value: "@reboot",
-    },
   ]
+
+  onMount(() => {
+    if (!$flags.cloud) {
+      CRON_EXPRESSIONS.push({
+        label: "Every Budibase Reboot",
+        value: "@reboot",
+      })
+    }
+  })
 </script>
 
 <div class="block-field">
-  <Input on:change={onChange} {value} on:blur={() => (touched = true)} />
+  <Input
+    on:change={onChange}
+    {value}
+    on:blur={() => (touched = true)}
+    updateOnChange={false}
+  />
   {#if touched && !value}
     <Label><div class="error">Please specify a CRON expression</div></Label>
   {/if}

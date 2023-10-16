@@ -1,38 +1,20 @@
 <script>
   import AutomationList from "./AutomationList.svelte"
   import CreateAutomationModal from "./CreateAutomationModal.svelte"
-  import { Icon, Modal, Tabs, Tab } from "@budibase/bbui"
+  import { Modal, Button, Layout } from "@budibase/bbui"
+  import Panel from "components/design/Panel.svelte"
 
   export let modal
   export let webhookModal
 </script>
 
-<div class="title">
-  <Tabs selected="Automations">
-    <Tab title="Automations">
-      <AutomationList />
-      <Modal bind:this={modal}>
-        <CreateAutomationModal {webhookModal} />
-      </Modal>
-    </Tab>
-  </Tabs>
-  <div class="add-button">
-    <Icon hoverable name="AddCircle" on:click={modal.show} />
-  </div>
-</div>
+<Panel title="Automations" borderRight>
+  <Layout paddingX="L" paddingY="XL" gap="S">
+    <Button cta on:click={modal.show}>Add automation</Button>
+  </Layout>
+  <AutomationList />
+</Panel>
 
-<style>
-  .add-button {
-    position: absolute;
-    top: var(--spacing-l);
-    right: var(--spacing-xl);
-  }
-
-  .title {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: stretch;
-    position: relative;
-  }
-</style>
+<Modal bind:this={modal}>
+  <CreateAutomationModal {webhookModal} />
+</Modal>

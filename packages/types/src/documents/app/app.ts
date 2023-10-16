@@ -1,4 +1,5 @@
-import { Document } from "../document"
+import { User, Document } from "../"
+import { SocketSession } from "../../sdk"
 
 export type AppMetadataErrors = { [key: string]: string[] }
 
@@ -14,14 +15,14 @@ export interface App extends Document {
   tenantId: string
   status: string
   theme?: string
-  customTheme?: {
-    buttonBorderRadius?: string
-    primaryColor?: string
-    primaryColorHover?: string
-  }
+  customTheme?: AppCustomTheme
   revertableVersion?: string
+  lockedBy?: User
+  sessions?: SocketSession[]
   navigation?: AppNavigation
   automationErrors?: AppMetadataErrors
+  icon?: AppIcon
+  features?: AppFeatures
 }
 
 export interface AppInstance {
@@ -46,4 +47,24 @@ export interface AppNavigationLink {
   url: string
   id?: string
   roleId?: string
+}
+
+export interface AppCustomTheme {
+  buttonBorderRadius?: string
+  primaryColor?: string
+  primaryColorHover?: string
+
+  // Used to exist before new design UI
+  navTextColor?: string
+  navBackground?: string
+}
+
+export interface AppIcon {
+  name: string
+  color: string
+}
+
+export interface AppFeatures {
+  componentValidation?: boolean
+  disableUserMetadata?: boolean
 }

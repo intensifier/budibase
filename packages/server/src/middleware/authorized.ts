@@ -1,23 +1,21 @@
 import {
-  getUserRoleHierarchy,
-  getRequiredResourceRole,
-  BUILTIN_ROLE_IDS,
-} from "@budibase/backend-core/roles"
-const {
-  PermissionTypes,
-  PermissionLevels,
-  doesHaveBasePermission,
-} = require("@budibase/backend-core/permissions")
-const builderMiddleware = require("./builder")
-const { isWebhookEndpoint } = require("./utils")
-const { buildCsrfMiddleware } = require("@budibase/backend-core/auth")
-const { getAppId } = require("@budibase/backend-core/context")
+  auth,
+  context,
+  permissions,
+  roles,
+  users,
+} from "@budibase/backend-core"
+import { PermissionLevel, PermissionType, Role, UserCtx } from "@budibase/types"
+import builderMiddleware from "./builder"
+import { isWebhookEndpoint } from "./utils"
+import { paramResource } from "./resourceId"
+import sdk from "../sdk"
 
 function hasResource(ctx: any) {
   return ctx.resourceId != null
 }
 
-const csrf = buildCsrfMiddleware()
+const csrf = auth.buildCsrfMiddleware()
 
 /**
  * Apply authorization to the requested resource:
@@ -26,15 +24,20 @@ const csrf = buildCsrfMiddleware()
  * - Otherwise the user must have the required role.
  */
 const checkAuthorized = async (
-  ctx: any,
+  ctx: UserCtx,
   resourceRoles: any,
-  permType: any,
-  permLevel: any
+  permType: PermissionType,
+  permLevel: PermissionLevel
 ) => {
+  const appId = context.getAppId()
+  const isGlobalBuilderApi = permType === PermissionType.GLOBAL_BUILDER
+  const isBuilderApi = permType === PermissionType.BUILDER
+  const globalBuilder = users.isGlobalBuilder(ctx.user)
+  let isBuilder = appId
+    ? users.isBuilder(ctx.user, appId)
+    : users.hasBuilderPermissions(ctx.user)
   // check if this is a builder api and the user is not a builder
-  const isBuilder = ctx.user && ctx.user.builder && ctx.user.builder.global
-  const isBuilderApi = permType === PermissionTypes.BUILDER
-  if (isBuilderApi && !isBuilder) {
+  if ((isGlobalBuilderApi && !globalBuilder) || (isBuilderApi && !isBuilder)) {
     return ctx.throw(403, "Not Authorized")
   }
 
@@ -45,16 +48,14 @@ const checkAuthorized = async (
 }
 
 const checkAuthorizedResource = async (
-  ctx: any,
+  ctx: UserCtx,
   resourceRoles: any,
-  permType: any,
-  permLevel: any
+  permType: PermissionType,
+  permLevel: PermissionLevel
 ) => {
   // get the user's roles
-  const roleId = ctx.roleId || BUILTIN_ROLE_IDS.PUBLIC
-  const userRoles = await getUserRoleHierarchy(roleId, {
-    idOnly: false,
-  })
+  const roleId = ctx.roleId || roles.BUILTIN_ROLE_IDS.PUBLIC
+  const userRoles = await roles.getUserRoleHierarchy(roleId)
   const permError = "User does not have permission"
   // check if the user has the required role
   if (resourceRoles.length > 0) {
@@ -66,12 +67,20 @@ const checkAuthorizedResource = async (
       ctx.throw(403, permError)
     }
     // fallback to the base permissions when no resource roles are found
-  } else if (!doesHaveBasePermission(permType, permLevel, userRoles)) {
+  } else if (
+    !permissions.doesHaveBasePermission(permType, permLevel, userRoles)
+  ) {
     ctx.throw(403, permError)
   }
 }
 
-export = (permType: any, permLevel: any = null, opts = { schema: false }) =>
+const authorized =
+  (
+    permType: PermissionType,
+    permLevel?: PermissionLevel,
+    opts = { schema: false },
+    resourcePath?: string
+  ) =>
   async (ctx: any, next: any) => {
     // webhooks don't need authentication, each webhook unique
     // also internal requests (between services) don't need authorized
@@ -83,29 +92,49 @@ export = (permType: any, permLevel: any = null, opts = { schema: false }) =>
       return ctx.throw(403, "No user info found")
     }
 
-    // check general builder stuff, this middleware is a good way
-    // to find API endpoints which are builder focused
-    await builderMiddleware(ctx, permType)
-
     // get the resource roles
-    let resourceRoles: any = []
-    let otherLevelRoles: any = []
+    let resourceRoles: string[] = []
+    let otherLevelRoles: string[] = []
     const otherLevel =
-      permLevel === PermissionLevels.READ
-        ? PermissionLevels.WRITE
-        : PermissionLevels.READ
-    const appId = getAppId()
-    if (appId && hasResource(ctx)) {
-      resourceRoles = await getRequiredResourceRole(permLevel, ctx)
+      permLevel === PermissionLevel.READ
+        ? PermissionLevel.WRITE
+        : PermissionLevel.READ
+
+    if (resourcePath) {
+      // Reusing the existing middleware to extract the value
+      paramResource(resourcePath)(ctx, () => {})
+    }
+
+    if (hasResource(ctx)) {
+      const { resourceId, subResourceId } = ctx
+
+      const permissions = await sdk.permissions.getResourcePerms(resourceId)
+      const subPermissions =
+        !!subResourceId &&
+        (await sdk.permissions.getResourcePerms(subResourceId))
+
+      function getPermLevel(permLevel: string) {
+        let result: string[] = []
+        if (permissions[permLevel]) {
+          result.push(permissions[permLevel].role)
+        }
+        if (subPermissions && subPermissions[permLevel]) {
+          result.push(subPermissions[permLevel].role)
+        }
+        return result
+      }
+
+      resourceRoles = getPermLevel(permLevel!)
       if (opts && opts.schema) {
-        otherLevelRoles = await getRequiredResourceRole(otherLevel, ctx)
+        otherLevelRoles = getPermLevel(otherLevel!)
       }
     }
 
     // if the resource is public, proceed
     if (
-      resourceRoles.includes(BUILTIN_ROLE_IDS.PUBLIC) ||
-      (otherLevelRoles && otherLevelRoles.includes(BUILTIN_ROLE_IDS.PUBLIC))
+      resourceRoles.includes(roles.BUILTIN_ROLE_IDS.PUBLIC) ||
+      (otherLevelRoles &&
+        otherLevelRoles.includes(roles.BUILTIN_ROLE_IDS.PUBLIC))
     ) {
       return next()
     }
@@ -115,9 +144,18 @@ export = (permType: any, permLevel: any = null, opts = { schema: false }) =>
       return ctx.throw(403, "Session not authenticated")
     }
 
+    // check general builder stuff, this middleware is a good way
+    // to find API endpoints which are builder focused
+    if (
+      permType === PermissionType.BUILDER ||
+      permType === PermissionType.GLOBAL_BUILDER
+    ) {
+      await builderMiddleware(ctx)
+    }
+
     try {
       // check authorized
-      await checkAuthorized(ctx, resourceRoles, permType, permLevel)
+      await checkAuthorized(ctx, resourceRoles, permType, permLevel!)
     } catch (err) {
       // this is a schema, check if
       if (opts && opts.schema && permLevel) {
@@ -130,3 +168,17 @@ export = (permType: any, permLevel: any = null, opts = { schema: false }) =>
     // csrf protection
     return csrf(ctx, next)
   }
+
+export default (
+  permType: PermissionType,
+  permLevel?: PermissionLevel,
+  opts = { schema: false }
+) => authorized(permType, permLevel, opts)
+
+export const authorizedResource = (
+  permType: PermissionType,
+  permLevel: PermissionLevel,
+  resourcePath: string
+) => {
+  return authorized(permType, permLevel, undefined, resourcePath)
+}

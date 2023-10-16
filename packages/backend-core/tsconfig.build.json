@@ -3,7 +3,6 @@
     "target": "es6",
     "module": "commonjs",
     "lib": ["es2020"],
-    "allowJs": true,
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
@@ -11,18 +10,20 @@
     "incremental": true,
     "sourceMap": true,
     "declaration": true,
-    "types": [ "node", "jest" ],
-    "outDir": "dist"
+    "types": ["node", "jest"],
+    "outDir": "dist",
+    "skipLibCheck": true,
+    "paths": {
+      "@budibase/types": ["../types/src"],
+      "@budibase/shared-core": ["../shared-core/src"]
+    }
   },
-  "include": [
-    "**/*.js",
-    "**/*.ts",
-    "package.json"
-  ],
+  "include": ["**/*.js", "**/*.ts"],
   "exclude": [
     "node_modules",
     "dist",
     "**/*.spec.ts",
-    "**/*.spec.js"
+    "**/*.spec.js",
+    "__mocks__"
   ]
 }
