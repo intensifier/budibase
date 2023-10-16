@@ -11,8 +11,12 @@
   } from "@budibase/bbui"
   import { getAvailableActions } from "./index"
   import { generate } from "shortid"
-  import { getButtonContextBindings } from "builderStore/dataBinding"
-  import { currentAsset, store } from "builderStore"
+  import {
+    getEventContextBindings,
+    getActionBindings,
+    makeStateBinding,
+  } from "builderStore/dataBinding"
+  import { cloneDeep } from "lodash/fp"
 
   const flipDurationMs = 150
   const EVENT_TYPE_KEY = "##eventHandlerType"
@@ -21,15 +25,41 @@
   export let key
   export let actions
   export let bindings = []
-
-  $: showAvailableActions = !actions?.length
+  export let nested
+  export let componentInstance
 
   let actionQuery
-  $: parsedQuery =
-    typeof actionQuery === "string" ? actionQuery.toLowerCase().trim() : ""
-
   let selectedAction = actions?.length ? actions[0] : null
 
+  const setUpdateActions = actions => {
+    return actions
+      ? cloneDeep(actions)
+          .filter(action => {
+            return (
+              action[EVENT_TYPE_KEY] === "Update State" &&
+              action.parameters?.type === "set" &&
+              action.parameters.key
+            )
+          })
+          .reduce((acc, action) => {
+            acc[action.id] = action
+            return acc
+          }, {})
+      : []
+  }
+
+  // Snapshot original action state
+  let updateStateActions = setUpdateActions(actions)
+
+  $: {
+    // Ensure parameters object is never null
+    if (selectedAction && !selectedAction.parameters) {
+      selectedAction.parameters = {}
+    }
+  }
+  $: parsedQuery =
+    typeof actionQuery === "string" ? actionQuery.toLowerCase().trim() : ""
+  $: showAvailableActions = !actions?.length
   $: mappedActionTypes = actionTypes.reduce((acc, action) => {
     let parsedName = action.name.toLowerCase().trim()
     if (parsedQuery.length && parsedName.indexOf(parsedQuery) < 0) {
@@ -41,17 +71,19 @@
   }, {})
 
   // These are ephemeral bindings which only exist while executing actions
-  $: buttonContextBindings = getButtonContextBindings(
-    $currentAsset,
-    $store.selectedComponentId,
-    key,
-    actions,
-    selectedAction?.id
-  )
-  $: allBindings = buttonContextBindings.concat(bindings)
+  $: eventContextBindings = getEventContextBindings({
+    componentInstance,
+    settingKey: key,
+  })
+  $: actionContextBindings = getActionBindings(actions, selectedAction?.id)
 
-  // Assign a unique ID to each action
+  $: allBindings = getAllBindings(
+    bindings,
+    [...eventContextBindings, ...actionContextBindings],
+    actions
+  )
   $: {
+    // Ensure each action has a unique ID
     if (actions) {
       actions.forEach(action => {
         if (!action.id) {
@@ -60,21 +92,29 @@
       })
     }
   }
-
   $: selectedActionComponent =
     selectedAction &&
     actionTypes.find(t => t.name === selectedAction[EVENT_TYPE_KEY])?.component
-
-  // Select the first action if we delete an action
   $: {
+    // Select the first action if we delete an action
     if (selectedAction && !actions?.includes(selectedAction)) {
       selectedAction = actions?.[0]
     }
   }
 
   const deleteAction = index => {
+    // Check if we're deleting the selected action
+    const selectedIndex = actions.indexOf(selectedAction)
+    const isSelected = index === selectedIndex
+
+    // Delete the action
     actions.splice(index, 1)
     actions = actions
+
+    // Select a new action if we deleted the selected one
+    if (isSelected) {
+      selectedAction = actions?.length ? actions[0] : null
+    }
   }
 
   const toggleActionList = () => {
@@ -110,6 +150,72 @@
   function handleDndFinalize(e) {
     actions = e.detail.items
   }
+
+  const getAllBindings = (actionBindings, eventContextBindings, actions) => {
+    let allBindings = []
+    let cloneActionBindings = cloneDeep(actionBindings)
+    if (!actions) {
+      return []
+    }
+
+    // Ensure bindings are generated for all "update state" action keys
+    actions
+      .filter(action => {
+        // Find all "Update State" actions which set values
+        return (
+          action[EVENT_TYPE_KEY] === "Update State" &&
+          action.parameters?.type === "set" &&
+          action.parameters.key
+        )
+      })
+      .forEach(action => {
+        // Check we have a binding for this action, and generate one if not
+        const stateBinding = makeStateBinding(action.parameters.key)
+        const hasKey = actionBindings.some(binding => {
+          return binding.runtimeBinding === stateBinding.runtimeBinding
+        })
+        if (!hasKey) {
+          let existing = updateStateActions[action.id]
+          if (existing) {
+            const existingBinding = makeStateBinding(existing.parameters.key)
+            cloneActionBindings = cloneActionBindings.filter(
+              binding =>
+                binding.runtimeBinding !== existingBinding.runtimeBinding
+            )
+          }
+          allBindings.push(stateBinding)
+        }
+      })
+    // Get which indexes are asynchronous automations as we want to filter them out from the bindings
+    const asynchronousAutomationIndexes = actions
+      .map((action, index) => {
+        if (
+          action[EVENT_TYPE_KEY] === "Trigger Automation" &&
+          !action.parameters?.synchronous
+        ) {
+          return index
+        }
+      })
+      .filter(index => index !== undefined)
+
+    // Based on the above, filter out the asynchronous automations from the bindings
+    let contextBindings = asynchronousAutomationIndexes
+      ? eventContextBindings.filter((binding, index) => {
+          return !asynchronousAutomationIndexes.includes(index)
+        })
+      : eventContextBindings
+
+    allBindings = contextBindings
+      .concat(cloneActionBindings)
+      .concat(allBindings)
+
+    return allBindings
+  }
+
+  const toDisplay = eventKey => {
+    const type = actionTypes.find(action => action.name == eventKey)
+    return type?.displayName || type?.name
+  }
 </script>
 
 <DrawerContent>
@@ -135,7 +241,9 @@
           <ul>
             {#each category as actionType}
               <li on:click={onAddAction(actionType)}>
-                <span class="action-name">{actionType.name}</span>
+                <span class="action-name">
+                  {actionType.displayName || actionType.name}
+                </span>
               </li>
             {/each}
           </ul>
@@ -166,7 +274,7 @@
           >
             <Icon name="DragHandle" size="XL" />
             <div class="action-header">
-              {index + 1}.&nbsp;{action[EVENT_TYPE_KEY]}
+              {index + 1}.&nbsp;{toDisplay(action[EVENT_TYPE_KEY])}
             </div>
             <Icon
               name="Close"
@@ -185,8 +293,9 @@
         <div class="selected-action-container">
           <svelte:component
             this={selectedActionComponent}
-            parameters={selectedAction.parameters}
+            bind:parameters={selectedAction.parameters}
             bindings={allBindings}
+            {nested}
           />
         </div>
       {/key}

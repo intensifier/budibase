@@ -32,7 +32,11 @@
     validation,
     formStep
   )
-  $: schemaType = fieldSchema?.type !== "formula" ? fieldSchema?.type : "string"
+
+  $: schemaType =
+    fieldSchema?.type !== "formula" && fieldSchema?.type !== "bigint"
+      ? fieldSchema?.type
+      : "string"
 
   // Focus label when editing
   let labelNode
@@ -77,7 +81,7 @@
         <Placeholder text="Form components need to be wrapped in a form" />
       {:else if !fieldState}
         <Placeholder />
-      {:else if schemaType && schemaType !== type && type !== "options"}
+      {:else if schemaType && schemaType !== type && !["options", "longform"].includes(type)}
         <Placeholder
           text="This Field setting is the wrong data type for this component"
         />

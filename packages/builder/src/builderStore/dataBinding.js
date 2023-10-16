@@ -6,7 +6,7 @@ import {
   findComponentPath,
   getComponentSettings,
 } from "./componentUtils"
-import { store } from "builderStore"
+import { store, currentAsset } from "builderStore"
 import {
   queries as queriesStores,
   tables as tablesStore,
@@ -21,6 +21,8 @@ import {
 import { TableNames } from "../constants"
 import { JSONUtils } from "@budibase/frontend-core"
 import ActionDefinitions from "components/design/settings/controls/ButtonActionEditor/manifest.json"
+import { environment, licensing } from "stores/portal"
+import { convertOldFieldFormat } from "components/design/settings/controls/FieldConfiguration/utils"
 
 // Regex to match all instances of template strings
 const CAPTURE_VAR_INSIDE_TEMPLATE = /{{([^}]+)}}/g
@@ -53,8 +55,13 @@ export const getBindableProperties = (asset, componentId) => {
  * Gets all rest bindable data fields
  */
 export const getRestBindings = () => {
+  const environmentVariablesEnabled = get(licensing).environmentVariablesEnabled
   const userBindings = getUserBindings()
-  return [...userBindings, ...getAuthBindings()]
+  return [
+    ...userBindings,
+    ...getAuthBindings(),
+    ...(environmentVariablesEnabled ? getEnvironmentBindings() : []),
+  ]
 }
 
 /**
@@ -71,20 +78,36 @@ export const getAuthBindings = () => {
       runtime: `${safeUser}.${safeOAuth2}.${safeAccessToken}`,
       readable: `Current User.OAuthToken`,
       key: "accessToken",
+      display: { name: "OAuthToken", type: "text" },
     },
   ]
 
-  bindings = Object.keys(authBindings).map(key => {
-    const fieldBinding = authBindings[key]
+  bindings = authBindings.map(fieldBinding => {
     return {
       type: "context",
       runtimeBinding: fieldBinding.runtime,
       readableBinding: fieldBinding.readable,
       fieldSchema: { type: "string", name: fieldBinding.key },
       providerId: "user",
+      category: "Current User",
+      display: fieldBinding.display,
     }
   })
   return bindings
+}
+
+export const getEnvironmentBindings = () => {
+  let envVars = get(environment).variables
+  return envVars.map(variable => {
+    return {
+      type: "context",
+      runtimeBinding: `env.${makePropSafe(variable.name)}`,
+      readableBinding: `env.${variable.name}`,
+      category: "Environment",
+      icon: "Key",
+      display: { type: "string", name: variable.name },
+    }
+  })
 }
 
 /**
@@ -93,19 +116,28 @@ export const getAuthBindings = () => {
  * @param {string} prefix A contextual string prefix/path for a user readable binding
  * @return {object[]} An array containing readable/runtime binding objects
  */
-export const toBindingsArray = (valueMap, prefix) => {
+export const toBindingsArray = (valueMap, prefix, category) => {
   if (!valueMap) {
     return []
   }
   return Object.keys(valueMap).reduce((acc, binding) => {
-    if (!binding || !valueMap[binding]) {
+    if (!binding) {
       return acc
     }
-    acc.push({
+
+    let config = {
       type: "context",
       runtimeBinding: binding,
       readableBinding: `${prefix}.${binding}`,
-    })
+      icon: "Brackets",
+    }
+
+    if (category) {
+      config.category = category
+    }
+
+    acc.push(config)
+
     return acc
   }, [])
 }
@@ -118,8 +150,7 @@ export const readableToRuntimeMap = (bindings, ctx) => {
     return {}
   }
   return Object.keys(ctx).reduce((acc, key) => {
-    let parsedQuery = readableToRuntimeBinding(bindings, ctx[key])
-    acc[key] = parsedQuery
+    acc[key] = readableToRuntimeBinding(bindings, ctx[key])
     return acc
   }, {})
 }
@@ -132,8 +163,7 @@ export const runtimeToReadableMap = (bindings, ctx) => {
     return {}
   }
   return Object.keys(ctx).reduce((acc, key) => {
-    let parsedQuery = runtimeToReadableBinding(bindings, ctx[key])
-    acc[key] = parsedQuery
+    acc[key] = runtimeToReadableBinding(bindings, ctx[key])
     return acc
   }, {})
 }
@@ -160,7 +190,12 @@ export const getComponentBindableProperties = (asset, componentId) => {
 /**
  * Gets all data provider components above a component.
  */
-export const getContextProviderComponents = (asset, componentId, type) => {
+export const getContextProviderComponents = (
+  asset,
+  componentId,
+  type,
+  options = { includeSelf: false }
+) => {
   if (!asset || !componentId) {
     return []
   }
@@ -168,7 +203,9 @@ export const getContextProviderComponents = (asset, componentId, type) => {
   // Get the component tree leading up to this component, ignoring the component
   // itself
   const path = findComponentPath(asset.props, componentId)
-  path.pop()
+  if (!options?.includeSelf) {
+    path.pop()
+  }
 
   // Filter by only data provider components
   return path.filter(component => {
@@ -234,18 +271,18 @@ export const getDatasourceForProvider = (asset, component) => {
     return null
   }
 
-  // There are different types of setting which can be a datasource, for
-  // example an actual datasource object, or a table ID string.
-  // Convert the datasource setting into a proper datasource object so that
-  // we can use it properly
-  if (datasourceSetting.type === "table") {
+  // For legacy compatibility, we need to be able to handle datasources that are
+  // just strings. These are not generated any more, so could be removed in
+  // future.
+  // TODO: remove at some point
+  const datasource = component[datasourceSetting?.key]
+  if (typeof datasource === "string") {
     return {
-      tableId: component[datasourceSetting?.key],
+      tableId: datasource,
       type: "table",
     }
-  } else {
-    return component[datasourceSetting?.key]
   }
+  return datasource
 }
 
 /**
@@ -292,14 +329,17 @@ const getProviderContextBindings = (asset, dataProviders) => {
       if (context.type === "form") {
         // Forms do not need table schemas
         // Their schemas are built from their component field names
-        schema = buildFormSchema(component)
+        schema = buildFormSchema(component, asset)
         readablePrefix = "Fields"
       } else if (context.type === "static") {
         // Static contexts are fully defined by the components
         schema = {}
         const values = context.values || []
         values.forEach(value => {
-          schema[value.key] = { name: value.label, type: "string" }
+          schema[value.key] = {
+            name: value.label,
+            type: value.type || "string",
+          }
         })
       } else if (context.type === "schema") {
         // Schema contexts are generated dynamically depending on their data
@@ -311,12 +351,19 @@ const getProviderContextBindings = (asset, dataProviders) => {
         schema = info.schema
         table = info.table
 
-        // For JSON arrays, use the array name as the readable prefix.
-        // Otherwise use the table name
+        // Determine what to prefix bindings with
         if (datasource.type === "jsonarray") {
+          // For JSON arrays, use the array name as the readable prefix
           const split = datasource.label.split(".")
           readablePrefix = split[split.length - 1]
+        } else if (datasource.type === "viewV2") {
+          // For views, use the view name
+          const view = Object.values(table?.views || {}).find(
+            view => view.id === datasource.id
+          )
+          readablePrefix = view?.name
         } else {
+          // Otherwise use the table name
           readablePrefix = info.table?.name
         }
       }
@@ -331,6 +378,11 @@ const getProviderContextBindings = (asset, dataProviders) => {
       if (runtimeSuffix) {
         providerId += `-${runtimeSuffix}`
       }
+
+      if (!filterCategoryByContext(component, context)) {
+        return
+      }
+
       const safeComponentId = makePropSafe(providerId)
 
       // Create bindable properties for each schema field
@@ -348,6 +400,12 @@ const getProviderContextBindings = (asset, dataProviders) => {
         }
         readableBinding += `.${fieldSchema.name || key}`
 
+        const bindingCategory = getComponentBindingCategory(
+          component,
+          context,
+          def
+        )
+
         // Create the binding object
         bindings.push({
           type: "context",
@@ -359,6 +417,13 @@ const getProviderContextBindings = (asset, dataProviders) => {
           providerId,
           // Table ID is used by JSON fields to know what table the field is in
           tableId: table?._id,
+          component: component._component,
+          category: bindingCategory.category,
+          icon: bindingCategory.icon,
+          display: {
+            name: fieldSchema.name || key,
+            type: fieldSchema.type,
+          },
         })
       })
     })
@@ -367,17 +432,52 @@ const getProviderContextBindings = (asset, dataProviders) => {
   return bindings
 }
 
+// Exclude a data context based on the component settings
+const filterCategoryByContext = (component, context) => {
+  const { _component } = component
+  if (_component.endsWith("formblock")) {
+    if (
+      (component.actionType == "Create" && context.type === "schema") ||
+      (component.actionType == "View" && context.type === "form")
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+const getComponentBindingCategory = (component, context, def) => {
+  let icon = def.icon
+  let category = component._instanceName
+
+  if (component._component.endsWith("formblock")) {
+    let contextCategorySuffix = {
+      form: "Fields",
+      schema: "Row",
+    }
+    category = `${component._instanceName} - ${
+      contextCategorySuffix[context.type]
+    }`
+    icon = context.type === "form" ? "Form" : "Data"
+  }
+  return {
+    icon,
+    category,
+  }
+}
+
 /**
  * Gets all bindable properties from the logged in user.
  */
-const getUserBindings = () => {
+export const getUserBindings = () => {
   let bindings = []
-  const { schema } = getSchemaForTable(TableNames.USERS)
+  const { schema } = getSchemaForDatasourcePlus(TableNames.USERS)
   const keys = Object.keys(schema).sort()
   const safeUser = makePropSafe("user")
-  keys.forEach(key => {
+
+  bindings = keys.reduce((acc, key) => {
     const fieldSchema = schema[key]
-    bindings.push({
+    acc.push({
       type: "context",
       runtimeBinding: `${safeUser}.${makePropSafe(key)}`,
       readableBinding: `Current User.${key}`,
@@ -385,8 +485,15 @@ const getUserBindings = () => {
       // datasource options, based on bindable properties
       fieldSchema,
       providerId: "user",
+      category: "Current User",
+      icon: "User",
+      display: {
+        name: key,
+      },
     })
-  })
+    return acc
+  }, [])
+
   return bindings
 }
 
@@ -397,16 +504,33 @@ const getDeviceBindings = () => {
   let bindings = []
   if (get(store).clientFeatures?.deviceAwareness) {
     const safeDevice = makePropSafe("device")
-    bindings.push({
-      type: "context",
-      runtimeBinding: `${safeDevice}.${makePropSafe("mobile")}`,
-      readableBinding: `Device.Mobile`,
-    })
-    bindings.push({
-      type: "context",
-      runtimeBinding: `${safeDevice}.${makePropSafe("tablet")}`,
-      readableBinding: `Device.Tablet`,
-    })
+
+    bindings = [
+      {
+        type: "context",
+        runtimeBinding: `${safeDevice}.${makePropSafe("mobile")}`,
+        readableBinding: `Device.Mobile`,
+        category: "Device",
+        icon: "DevicePhone",
+        display: { type: "boolean", name: "mobile" },
+      },
+      {
+        type: "context",
+        runtimeBinding: `${safeDevice}.${makePropSafe("tablet")}`,
+        readableBinding: `Device.Tablet`,
+        category: "Device",
+        icon: "DevicePhone",
+        display: { type: "boolean", name: "tablet" },
+      },
+      {
+        type: "context",
+        runtimeBinding: `${safeDevice}.${makePropSafe("theme")}`,
+        readableBinding: `App.Theme`,
+        category: "Device",
+        icon: "DevicePhone",
+        display: { type: "string", name: "App Theme" },
+      },
+    ]
   }
   return bindings
 }
@@ -429,6 +553,9 @@ const getSelectedRowsBindings = asset => {
           "selectedRows"
         )}`,
         readableBinding: `${table._instanceName}.Selected rows`,
+        category: "Selected rows",
+        icon: "ViewRow",
+        display: { name: table._instanceName },
       }))
     )
 
@@ -443,10 +570,24 @@ const getSelectedRowsBindings = asset => {
           block._id + "-table"
         )}.${makePropSafe("selectedRows")}`,
         readableBinding: `${block._instanceName}.Selected rows`,
+        category: "Selected rows",
+        icon: "ViewRow",
+        display: { name: block._instanceName },
       }))
     )
   }
   return bindings
+}
+
+export const makeStateBinding = key => {
+  return {
+    type: "context",
+    runtimeBinding: `${makePropSafe("state")}.${makePropSafe(key)}`,
+    readableBinding: `State.${key}`,
+    category: "State",
+    icon: "AutomatedSegment",
+    display: { name: key },
+  }
 }
 
 /**
@@ -455,12 +596,7 @@ const getSelectedRowsBindings = asset => {
 const getStateBindings = () => {
   let bindings = []
   if (get(store).clientFeatures?.state) {
-    const safeState = makePropSafe("state")
-    bindings = getAllStateVariables().map(key => ({
-      type: "context",
-      runtimeBinding: `${safeState}.${makePropSafe(key)}`,
-      readableBinding: `State.${key}`,
-    }))
+    bindings = getAllStateVariables().map(makeStateBinding)
   }
   return bindings
 }
@@ -482,11 +618,17 @@ const getUrlBindings = asset => {
     type: "context",
     runtimeBinding: `${safeURL}.${makePropSafe(param)}`,
     readableBinding: `URL.${param}`,
+    category: "URL",
+    icon: "RailTop",
+    display: { type: "string", name: param },
   }))
   const queryParamsBinding = {
     type: "context",
     runtimeBinding: makePropSafe("query"),
     readableBinding: "Query params",
+    category: "URL",
+    icon: "RailTop",
+    display: { type: "object", name: "Query params" },
   }
   return urlParamBindings.concat([queryParamsBinding])
 }
@@ -497,43 +639,69 @@ const getRoleBindings = () => {
       type: "context",
       runtimeBinding: `trim "${role._id}"`,
       readableBinding: `Role.${role.name}`,
+      category: "Role",
+      icon: "UserGroup",
+      display: { type: "string", name: role.name },
     }
   })
 }
 
 /**
- * Gets all bindable properties exposed in a button actions flow up until
- * the specified action ID, as well as context provided for the action
- * setting as a whole by the component.
+ * Gets all bindable event context properties provided in the component
+ * setting
  */
-export const getButtonContextBindings = (
-  asset,
-  componentId,
+export const getEventContextBindings = ({
   settingKey,
-  actions,
-  actionId
-) => {
+  componentInstance,
+  componentId,
+  componentDefinition,
+  asset,
+}) => {
   let bindings = []
+
+  const selectedAsset = asset ?? get(currentAsset)
 
   // Check if any context bindings are provided by the component for this
   // setting
-  const component = findComponent(asset.props, componentId)
-  const settings = getComponentSettings(component?._component)
-  const eventSetting = settings.find(setting => setting.key === settingKey)
-  if (!eventSetting) {
+  const component =
+    componentInstance ?? findComponent(selectedAsset.props, componentId)
+
+  if (!component) {
     return bindings
   }
-  if (eventSetting.context?.length) {
+
+  const definition =
+    componentDefinition ??
+    store.actions.components.getDefinition(component?._component)
+
+  const settings = getComponentSettings(component?._component)
+  const eventSetting = settings.find(setting => setting.key === settingKey)
+
+  if (eventSetting?.context?.length) {
     eventSetting.context.forEach(contextEntry => {
       bindings.push({
         readableBinding: contextEntry.label,
         runtimeBinding: `${makePropSafe("eventContext")}.${makePropSafe(
           contextEntry.key
         )}`,
+        category: component._instanceName,
+        icon: definition.icon,
+        display: {
+          name: contextEntry.label,
+        },
       })
     })
   }
+  return bindings
+}
 
+/**
+ * Gets all bindable properties exposed in an event action flow up until
+ * the specified action ID, as well as context provided for the action
+ * setting as a whole by the component.
+ */
+export const getActionBindings = (actions, actionId) => {
+  let bindings = []
   // Get the steps leading up to this value
   const index = actions?.findIndex(action => action.id === actionId)
   if (index == null || index === -1) {
@@ -551,26 +719,38 @@ export const getButtonContextBindings = (
         bindings.push({
           readableBinding: `Action ${idx + 1}.${contextValue.label}`,
           runtimeBinding: `actions.${idx}.${contextValue.value}`,
+          category: "Actions",
+          icon: "JourneyAction",
+          display: {
+            name: contextValue.label,
+          },
         })
       })
     }
   })
-
   return bindings
 }
 
 /**
- * Gets the schema for a certain table ID.
+ * Gets the schema for a certain datasource plus.
  * The options which can be passed in are:
  *   formSchema: whether the schema is for a form
  *   searchableSchema: whether to generate a searchable schema, which may have
  *     fewer fields than a readable schema
- * @param tableId the table ID to get the schema for
+ * @param resourceId the DS+ resource ID
  * @param options options for generating the schema
  * @return {{schema: Object, table: Object}}
  */
-export const getSchemaForTable = (tableId, options) => {
-  return getSchemaForDatasource(null, { type: "table", tableId }, options)
+export const getSchemaForDatasourcePlus = (resourceId, options) => {
+  const isViewV2 = resourceId?.includes("view_")
+  const datasource = isViewV2
+    ? {
+        type: "viewV2",
+        id: resourceId,
+        tableId: resourceId.split("_").slice(1, 3).join("_"),
+      }
+    : { type: "table", tableId: resourceId }
+  return getSchemaForDatasource(null, datasource, options)
 }
 
 /**
@@ -647,9 +827,21 @@ export const getSchemaForDatasource = (asset, datasource, options) => {
     // Determine the schema from the backing entity if not already determined
     if (table && !schema) {
       if (type === "view") {
-        // For views, the schema is pulled from the `views` property of the
-        // table
+        // Old views
         schema = cloneDeep(table.views?.[datasource.name]?.schema)
+      } else if (type === "viewV2") {
+        // New views which are DS+
+        const view = Object.values(table.views || {}).find(
+          view => view.id === datasource.id
+        )
+        schema = cloneDeep(view?.schema)
+
+        // Strip hidden fields
+        Object.keys(schema || {}).forEach(field => {
+          if (!schema[field].visible) {
+            delete schema[field]
+          }
+        })
       } else if (
         type === "query" &&
         (options.formSchema || options.searchableSchema)
@@ -695,12 +887,12 @@ export const getSchemaForDatasource = (asset, datasource, options) => {
 
     // Determine if we should add ID and rev to the schema
     const isInternal = table && !table.sql
-    const isTable = ["table", "link"].includes(datasource.type)
+    const isDSPlus = ["table", "link", "viewV2"].includes(datasource.type)
 
     // ID is part of the readable schema for all tables
     // Rev is part of the readable schema for internal tables only
-    let addId = isTable
-    let addRev = isTable && isInternal
+    let addId = isDSPlus
+    let addRev = isDSPlus && isInternal
 
     // Don't add ID or rev for form schemas
     if (options.formSchema) {
@@ -710,7 +902,7 @@ export const getSchemaForDatasource = (asset, datasource, options) => {
 
     // ID is only searchable for internal tables
     else if (options.searchableSchema) {
-      addId = isTable && isInternal
+      addId = isDSPlus && isInternal
     }
 
     // Add schema properties if required
@@ -748,11 +940,45 @@ export const getSchemaForDatasource = (asset, datasource, options) => {
  * Builds a form schema given a form component.
  * A form schema is a schema of all the fields nested anywhere within a form.
  */
-export const buildFormSchema = component => {
+export const buildFormSchema = (component, asset) => {
   let schema = {}
   if (!component) {
     return schema
   }
+
+  if (component._component.endsWith("formblock")) {
+    let schema = {}
+    const datasource = getDatasourceForProvider(asset, component)
+    const info = getSchemaForDatasource(component, datasource)
+
+    if (!info?.schema) {
+      return schema
+    }
+
+    if (!component.fields) {
+      Object.values(info.schema)
+        .filter(
+          ({ autocolumn, name }) =>
+            !autocolumn && !["_rev", "_id"].includes(name)
+        )
+        .forEach(({ name }) => {
+          schema[name] = { type: info?.schema[name].type }
+        })
+    } else {
+      // Field conversion
+      const patched = convertOldFieldFormat(component.fields || [])
+      patched?.forEach(({ field, active }) => {
+        if (!active) return
+        if (info?.schema[field]) {
+          schema[field] = { type: info?.schema[field].type }
+        }
+      })
+    }
+
+    return schema
+  }
+
+  // Otherwise find all field component children
   const settings = getComponentSettings(component._component)
   const fieldSetting = settings.find(
     setting => setting.key === "field" && setting.type.startsWith("field/")
@@ -764,7 +990,7 @@ export const buildFormSchema = component => {
     }
   }
   component._children?.forEach(child => {
-    const childSchema = buildFormSchema(child)
+    const childSchema = buildFormSchema(child, asset)
     schema = { ...schema, ...childSchema }
   })
   return schema
@@ -941,7 +1167,10 @@ const bindingReplacement = (
  * {{ literal [componentId] }}
  */
 const extractLiteralHandlebarsID = value => {
-  return value?.match(/{{\s*literal\s*\[+([^\]]+)].*}}/)?.[1]
+  if (!value || typeof value !== "string") {
+    return null
+  }
+  return value.match(/{{\s*literal\s*\[+([^\]]+)].*}}/)?.[1]
 }
 
 /**

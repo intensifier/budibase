@@ -1,5 +1,4 @@
 <script>
-  //import { createEventDispatcher } from "svelte"
   import "@spectrum-css/popover/dist/index-vars.css"
   import clickOutside from "../Actions/click_outside"
   import { fly } from "svelte/transition"
@@ -50,6 +49,13 @@
     dispatch("change", value)
     open = false
   }
+
+  const handleOutsideClick = event => {
+    if (open) {
+      event.stopPropagation()
+      open = false
+    }
+  }
 </script>
 
 <div class="container">
@@ -64,7 +70,7 @@
   </div>
   {#if open}
     <div
-      use:clickOutside={() => (open = false)}
+      use:clickOutside={handleOutsideClick}
       transition:fly={{ y: -20, duration: 200 }}
       class="spectrum-Popover spectrum-Popover--bottom spectrum-Picker-popover is-open"
       class:spectrum-Popover--align-right={alignRight}

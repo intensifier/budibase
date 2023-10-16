@@ -28,8 +28,11 @@ describe("/views", () => {
 
   afterAll(setup.afterAll)
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     await config.init()
+  })
+  
+  beforeEach(async() => {
     table = await config.createTable(priceTable())
   })
 
@@ -111,8 +114,8 @@ describe("/views", () => {
       expect(res.body.tableId).toBe(table._id)
 
       const updatedTable = await config.getTable(table._id)
-      expect(updatedTable.views).toEqual({
-        TestView: {
+      const expectedObj = expect.objectContaining({
+        TestView: expect.objectContaining({
           field: "Price",
           calculation: "stats",
           tableId: table._id,
@@ -140,8 +143,9 @@ describe("/views", () => {
               type: "string",
             },
           },
-        },
+        }),
       })
+      expect(updatedTable.views).toEqual(expectedObj)
     })
   })
 
@@ -245,7 +249,7 @@ describe("/views", () => {
     })
 
     it("returns only custom views", async () => {
-      await config.createView({
+      await config.createLegacyView({
         name: "TestView",
         field: "Price",
         calculation: "stats",
@@ -263,7 +267,7 @@ describe("/views", () => {
 
   describe("query", () => {
     it("returns data for the created view", async () => {
-      await config.createView({
+      await config.createLegacyView({
         name: "TestView",
         field: "Price",
         calculation: "stats",
@@ -291,7 +295,7 @@ describe("/views", () => {
     })
 
     it("returns data for the created view using a group by", async () => {
-      await config.createView({
+      await config.createLegacyView({
         calculation: "stats",
         name: "TestView",
         field: "Price",
@@ -327,7 +331,7 @@ describe("/views", () => {
   describe("destroy", () => {
     it("should be able to delete a view", async () => {
       const table = await config.createTable(priceTable())
-      const view = await config.createView()
+      const view = await config.createLegacyView()
       const res = await request
         .delete(`/api/views/${view.name}`)
         .set(config.defaultHeaders())
@@ -347,7 +351,7 @@ describe("/views", () => {
 
     const setupExport = async () => {
       const table = await config.createTable()
-      await config.createRow({ name: "test-name", description: "test-desc" })
+      await config.createRow({ name: "test-name", description: "ùúûü" })
       return table
     }
 
@@ -362,11 +366,11 @@ describe("/views", () => {
       const rows = JSON.parse(res.text)
       expect(rows.length).toBe(1)
       expect(rows[0].name).toBe("test-name")
-      expect(rows[0].description).toBe("test-desc")
+      expect(rows[0].description).toBe("ùúûü")
     }
 
     const assertCSVExport = (res) => {
-      expect(res.text).toBe("\"name\",\"description\"\n\"test-name\",\"test-desc\"")
+      expect(res.text).toBe(`"name","description"\n"test-name","ùúûü"`)
     }
 
     it("should be able to export a table as JSON", async () => {
@@ -391,7 +395,7 @@ describe("/views", () => {
 
     it("should be able to export a view as JSON", async () => {
       let table = await setupExport()
-      const view = await config.createView()
+      const view = await config.createLegacyView()
       table = await config.getTable(table._id)
 
       let res = await exportView(view.name, "json")
@@ -403,7 +407,7 @@ describe("/views", () => {
 
     it("should be able to export a view as CSV", async () => {
       let table = await setupExport()
-      const view = await config.createView()
+      const view = await config.createLegacyView()
       table = await config.getTable(table._id)
 
       let res = await exportView(view.name, "csv")

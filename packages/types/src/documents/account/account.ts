@@ -1,4 +1,6 @@
-import { Hosting } from "../../sdk"
+import { Feature, Hosting, License, PlanType, Quotas } from "../../sdk"
+import { DeepPartial } from "../../shared"
+import { QuotaUsage } from "../global"
 
 export interface CreateAccount {
   email: string
@@ -18,13 +20,18 @@ export interface CreatePassswordAccount extends CreateAccount {
   password: string
 }
 
+export interface CreateVerifiableSSOAccount extends CreateAccount {
+  provider?: AccountSSOProvider
+  thirdPartyProfile?: any
+}
+
 export const isCreatePasswordAccount = (
   account: CreateAccount
 ): account is CreatePassswordAccount => account.authType === AuthType.PASSWORD
 
-export interface UpdateAccount {
-  stripeCustomerId?: string
-  licenseKey?: string
+export interface LicenseOverrides {
+  features?: Feature[]
+  quotas?: DeepPartial<Quotas>
 }
 
 export interface Account extends CreateAccount {
@@ -36,8 +43,22 @@ export interface Account extends CreateAccount {
   verificationSent: boolean
   // licensing
   tier: string // deprecated
+  planType?: PlanType
+  /** @deprecated */
+  planTier?: number
+  license?: License
+  installId?: string
+  installTenantId?: string
+  installVersion?: string
   stripeCustomerId?: string
   licenseKey?: string
+  licenseKeyActivatedAt?: number
+  licenseRequestedAt?: number
+  licenseOverrides?: LicenseOverrides
+  provider?: AccountSSOProvider
+  providerType?: AccountSSOProviderType
+  quotaUsage?: QuotaUsage
+  offlineLicenseToken?: string
 }
 
 export interface PasswordAccount extends Account {
@@ -63,13 +84,32 @@ export const isSelfHostAccount = (account: Account) =>
 export const isSSOAccount = (account: Account): account is SSOAccount =>
   account.authType === AuthType.SSO
 
-export interface SSOAccount extends Account {
-  pictureUrl?: string
-  provider?: string
-  providerType?: string
+export enum AccountSSOProviderType {
+  GOOGLE = "google",
+  MICROSOFT = "microsoft",
+}
+
+export enum AccountSSOProvider {
+  GOOGLE = "google",
+  MICROSOFT = "microsoft",
+}
+
+const verifiableSSOProviders: AccountSSOProvider[] = [
+  AccountSSOProvider.MICROSOFT,
+]
+export function isVerifiableSSOProvider(provider: AccountSSOProvider): boolean {
+  return verifiableSSOProviders.includes(provider)
+}
+
+export interface AccountSSO {
+  provider: AccountSSOProvider
+  providerType: AccountSSOProviderType
   oauth2?: OAuthTokens
+  pictureUrl?: string
   thirdPartyProfile: any // TODO: define what the google profile looks like
 }
+
+export type SSOAccount = (Account | CloudAccount) & AccountSSO
 
 export enum AuthType {
   SSO = "sso",

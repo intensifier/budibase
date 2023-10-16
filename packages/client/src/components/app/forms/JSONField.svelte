@@ -37,8 +37,8 @@
 
   const handleChange = e => {
     const value = parseValue(e.detail)
-    fieldApi.setValue(value)
-    if (onChange) {
+    const changed = fieldApi.setValue(value)
+    if (onChange && changed) {
       onChange({ value })
     }
   }
@@ -72,9 +72,11 @@
   :global(.spectrum-Form-itemField .spectrum-Textfield--multiline) {
     min-height: calc(var(--height) - 24px);
   }
-  :global(.spectrum-Form--labelsAbove
-      .spectrum-Form-itemField
-      .spectrum-Textfield--multiline) {
+  :global(
+      .spectrum-Form--labelsAbove
+        .spectrum-Form-itemField
+        .spectrum-Textfield--multiline
+    ) {
     min-height: calc(var(--height) - 24px);
   }
 </style>

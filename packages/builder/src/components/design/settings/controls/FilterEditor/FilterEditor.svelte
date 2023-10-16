@@ -13,28 +13,48 @@
   export let value = []
   export let componentInstance
   export let bindings = []
+  export let schema = null
 
   let drawer
-  let tempValue = value || []
 
-  $: dataSource = getDatasourceForProvider($currentAsset, componentInstance)
-  $: schema = getSchemaForDatasource($currentAsset, dataSource)?.schema
-  $: schemaFields = Object.values(schema || {})
+  $: tempValue = value
+  $: datasource = getDatasourceForProvider($currentAsset, componentInstance)
+  $: dsSchema = getSchemaForDatasource($currentAsset, datasource)?.schema
+  $: schemaFields = Object.values(schema || dsSchema || {})
+  $: text = getText(value?.filter(filter => filter.field))
 
-  const saveFilter = async () => {
+  async function saveFilter() {
     dispatch("change", tempValue)
-    notifications.success("Filters saved.")
+    notifications.success("Filters saved")
     drawer.hide()
+  }
+
+  const getText = filters => {
+    if (!filters?.length) {
+      return "No filters set"
+    } else {
+      return `${filters.length} filter${filters.length === 1 ? "" : "s"} set`
+    }
   }
 </script>
 
-<ActionButton on:click={drawer.show}>Define filters</ActionButton>
+<div class="filter-editor">
+  <ActionButton on:click={drawer.show}>{text}</ActionButton>
+</div>
 <Drawer bind:this={drawer} title="Filtering">
   <Button cta slot="buttons" on:click={saveFilter}>Save</Button>
   <FilterDrawer
     slot="body"
-    bind:filters={tempValue}
+    filters={value}
     {bindings}
     {schemaFields}
+    {datasource}
+    on:change={e => (tempValue = e.detail)}
   />
 </Drawer>
+
+<style>
+  .filter-editor :global(.spectrum-ActionButton) {
+    width: 100%;
+  }
+</style>

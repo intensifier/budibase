@@ -1,8 +1,7 @@
 import { QueryVariable } from "./definitions"
-const env = require("../environment")
-const db = require("../db")
-const redis = require("@budibase/backend-core/redis")
-const { SEPARATOR } = require("@budibase/backend-core/db")
+import env from "../environment"
+import * as db from "../db"
+import { redis, db as dbCore } from "@budibase/backend-core"
 
 const VARIABLE_TTL_SECONDS = 3600
 let client: any
@@ -21,16 +20,16 @@ process.on("exit", async () => {
 })
 
 function makeVariableKey(queryId: string, variable: string) {
-  return `${queryId}${SEPARATOR}${variable}`
+  return `${queryId}${dbCore.SEPARATOR}${variable}`
 }
 
 export function threadSetup() {
   // don't run this if not threading
-  if (env.isTest() || env.DISABLE_THREADING) {
+  if (env.isTest() || env.DISABLE_THREADING || !env.isInThread()) {
+    console.debug(`[${env.FORKED_PROCESS_NAME}] thread setup skipped`)
     return
   }
-  // when thread starts, make sure it is recorded
-  env.setInThread()
+  console.debug(`[${env.FORKED_PROCESS_NAME}] thread setup running`)
   db.init()
 }
 

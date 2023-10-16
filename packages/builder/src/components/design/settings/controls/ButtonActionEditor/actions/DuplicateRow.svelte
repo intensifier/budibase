@@ -1,10 +1,10 @@
 <script>
   import { Select, Label, Body, Checkbox, Input } from "@budibase/bbui"
   import { store, currentAsset } from "builderStore"
-  import { tables } from "stores/backend"
+  import { tables, viewsV2 } from "stores/backend"
   import {
     getContextProviderComponents,
-    getSchemaForTable,
+    getSchemaForDatasourcePlus,
   } from "builderStore/dataBinding"
   import SaveFields from "./SaveFields.svelte"
 
@@ -23,7 +23,15 @@
   )
   $: providerOptions = getProviderOptions(formComponents, schemaComponents)
   $: schemaFields = getSchemaFields($currentAsset, parameters?.tableId)
-  $: tableOptions = $tables.list || []
+  $: tableOptions = $tables.list.map(table => ({
+    label: table.name,
+    resourceId: table._id,
+  }))
+  $: viewOptions = $viewsV2.list.map(view => ({
+    label: view.name,
+    resourceId: view.id,
+  }))
+  $: options = [...(tableOptions || []), ...(viewOptions || [])]
 
   // Gets a context definition of a certain type from a component definition
   const extractComponentContext = (component, contextType) => {
@@ -60,7 +68,7 @@
   }
 
   const getSchemaFields = (asset, tableId) => {
-    const { schema } = getSchemaForTable(tableId)
+    const { schema } = getSchemaForDatasourcePlus(tableId)
     delete schema._id
     delete schema._rev
     return Object.values(schema || {})
@@ -73,13 +81,13 @@
 
 <div class="root">
   <Body size="S">
-    Choose the data source that provides the row you would like to duplicate.
+    Choose the datasource that provides the row you would like to duplicate.
     <br />
     You can always add or override fields manually.
   </Body>
 
   <div class="params">
-    <Label small>Data Source</Label>
+    <Label small>Datasource</Label>
     <Select
       bind:value={parameters.providerId}
       options={providerOptions}
@@ -89,12 +97,17 @@
     <Label small>Duplicate to Table</Label>
     <Select
       bind:value={parameters.tableId}
-      options={tableOptions}
-      getOptionLabel={option => option.name}
-      getOptionValue={option => option._id}
+      {options}
+      getOptionLabel={option => option.label}
+      getOptionValue={option => option.resourceId}
     />
 
     <Label small />
+    <Checkbox
+      text="Do not display default notification"
+      bind:value={parameters.notificationOverride}
+    />
+    <br />
     <Checkbox text="Require confirmation" bind:value={parameters.confirm} />
 
     {#if parameters.confirm}

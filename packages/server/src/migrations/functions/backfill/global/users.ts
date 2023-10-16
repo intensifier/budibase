@@ -1,10 +1,14 @@
-import { events, db as dbUtils } from "@budibase/backend-core"
+import {
+  events,
+  db as dbUtils,
+  users as usersCore,
+} from "@budibase/backend-core"
 import { User, CloudAccount } from "@budibase/types"
 import { DEFAULT_TIMESTAMP } from ".."
 
 // manually define user doc params - normally server doesn't read users from the db
 const getUserParams = (props: any) => {
-  return dbUtils.getDocParams(dbUtils.DocumentTypes.USER, null, props)
+  return dbUtils.getDocParams(dbUtils.DocumentType.USER, null, props)
 }
 
 export const getUsers = async (globalDb: any): Promise<User[]> => {
@@ -30,11 +34,11 @@ export const backfill = async (
     await events.identification.identifyUser(user, account, timestamp)
     await events.user.created(user, timestamp)
 
-    if (user.admin?.global) {
+    if (usersCore.hasAdminPermissions(user)) {
       await events.user.permissionAdminAssigned(user, timestamp)
     }
 
-    if (user.builder?.global) {
+    if (usersCore.hasBuilderPermissions(user)) {
       await events.user.permissionBuilderAssigned(user, timestamp)
     }
 

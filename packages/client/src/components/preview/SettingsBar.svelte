@@ -3,7 +3,7 @@
   import SettingsButton from "./SettingsButton.svelte"
   import SettingsColorPicker from "./SettingsColorPicker.svelte"
   import SettingsPicker from "./SettingsPicker.svelte"
-  import { builderStore, componentStore } from "stores"
+  import { builderStore, componentStore, dndIsDragging } from "stores"
   import { domDebounce } from "utils/domDebounce"
 
   const verticalOffset = 36
@@ -15,9 +15,22 @@
   let self
   let measured = false
 
+  $: id = $builderStore.selectedComponentId
+  $: instance = componentStore.actions.getComponentInstance(id)
+  $: state = $instance?.state
   $: definition = $componentStore.selectedComponentDefinition
-  $: showBar = definition?.showSettingsBar && !$builderStore.isDragging
+  $: showBar =
+    definition?.showSettingsBar !== false &&
+    !$dndIsDragging &&
+    definition &&
+    !$state?.errorState
+  $: {
+    if (!showBar) {
+      measured = false
+    }
+  }
   $: settings = getBarSettings(definition)
+  $: isRoot = id === $builderStore.screen?.props?._id
 
   const getBarSettings = definition => {
     let allSettings = []
@@ -147,26 +160,30 @@
       {:else if setting.type === "color"}
         <SettingsColorPicker prop={setting.key} />
       {/if}
-      {#if setting.barSeparator !== false}
+      {#if setting.barSeparator !== false && (settings.length != idx + 1 || !isRoot)}
         <div class="divider" />
       {/if}
     {/each}
-    <SettingsButton
-      icon="Duplicate"
-      on:click={() => {
-        builderStore.actions.duplicateComponent(
-          $builderStore.selectedComponentId
-        )
-      }}
-      title="Duplicate component"
-    />
-    <SettingsButton
-      icon="Delete"
-      on:click={() => {
-        builderStore.actions.deleteComponent($builderStore.selectedComponentId)
-      }}
-      title="Delete component"
-    />
+    {#if !isRoot}
+      <SettingsButton
+        icon="Duplicate"
+        on:click={() => {
+          builderStore.actions.duplicateComponent(
+            $builderStore.selectedComponentId
+          )
+        }}
+        title="Duplicate component"
+      />
+      <SettingsButton
+        icon="Delete"
+        on:click={() => {
+          builderStore.actions.deleteComponent(
+            $builderStore.selectedComponentId
+          )
+        }}
+        title="Delete component"
+      />
+    {/if}
   </div>
 {/if}
 

@@ -1,23 +1,15 @@
 import Deployment from "./Deployment"
+import { context, db as dbCore, events, cache } from "@budibase/backend-core"
+import { DocumentType, getAutomationParams } from "../../../db/utils"
 import {
-  Replication,
-  getProdAppID,
-  getDevelopmentAppID,
-} from "@budibase/backend-core/db"
-import { DocumentTypes, getAutomationParams } from "../../../db/utils"
-import {
+  clearMetadata,
   disableAllCrons,
   enableCronTrigger,
-  clearMetadata,
 } from "../../../automations/utils"
-import { app as appCache } from "@budibase/backend-core/cache"
-import {
-  getAppId,
-  getAppDB,
-  getProdAppDB,
-} from "@budibase/backend-core/context"
-import { quotas } from "@budibase/pro"
-import { events } from "@budibase/backend-core"
+import { backups } from "@budibase/pro"
+import { App, AppBackupTrigger } from "@budibase/types"
+import sdk from "../../../sdk"
+import { builderSocket } from "../../../websockets"
 
 // the max time we can wait for an invalidation to complete before considering it failed
 const MAX_PENDING_TIME_MS = 30 * 60000
@@ -47,14 +39,14 @@ async function checkAllDeployments(deployments: any) {
 
 async function storeDeploymentHistory(deployment: any) {
   const deploymentJSON = deployment.getJSON()
-  const db = getAppDB()
+  const db = context.getAppDB()
 
   let deploymentDoc
   try {
     // theres only one deployment doc per app database
-    deploymentDoc = await db.get(DocumentTypes.DEPLOYMENTS)
+    deploymentDoc = await db.get<any>(DocumentType.DEPLOYMENTS)
   } catch (err) {
-    deploymentDoc = { _id: DocumentTypes.DEPLOYMENTS, history: {} }
+    deploymentDoc = { _id: DocumentType.DEPLOYMENTS, history: {} }
   }
 
   const deploymentId = deploymentJSON._id
@@ -75,7 +67,7 @@ async function storeDeploymentHistory(deployment: any) {
 }
 
 async function initDeployedApp(prodAppId: any) {
-  const db = getProdAppDB()
+  const db = context.getProdAppDB()
   console.log("Reading automation docs")
   const automations = (
     await db.allDocs(
@@ -85,50 +77,117 @@ async function initDeployedApp(prodAppId: any) {
     )
   ).rows.map((row: any) => row.doc)
   await clearMetadata()
-  console.log("You have " + automations.length + " automations")
+  const { count } = await disableAllCrons(prodAppId)
   const promises = []
-  console.log("Disabling prod crons..")
-  await disableAllCrons(prodAppId)
-  console.log("Prod Cron triggers disabled..")
-  console.log("Enabling cron triggers for deployed app..")
   for (let automation of automations) {
     promises.push(enableCronTrigger(prodAppId, automation))
   }
-  await Promise.all(promises)
-  console.log("Enabled cron triggers for deployed app..")
+  const results = await Promise.all(promises)
+  const enabledCount = results
+    .map(result => result.enabled)
+    .filter(result => result).length
+  console.log(
+    `Cleared ${count} old CRON, enabled ${enabledCount} new CRON triggers for app deployment`
+  )
+  // sync the automations back to the dev DB - since there is now CRON
+  // information attached
+  await sdk.applications.syncApp(dbCore.getDevAppID(prodAppId), {
+    automationOnly: true,
+  })
 }
 
-async function deployApp(deployment: any) {
+export async function fetchDeployments(ctx: any) {
+  try {
+    const db = context.getAppDB()
+    const deploymentDoc = await db.get(DocumentType.DEPLOYMENTS)
+    const { updated, deployments } = await checkAllDeployments(deploymentDoc)
+    if (updated) {
+      await db.put(deployments)
+    }
+    ctx.body = Object.values(deployments.history).reverse()
+  } catch (err) {
+    console.error(err)
+    ctx.body = []
+  }
+}
+
+export async function deploymentProgress(ctx: any) {
+  try {
+    const db = context.getAppDB()
+    const deploymentDoc = await db.get<any>(DocumentType.DEPLOYMENTS)
+    ctx.body = deploymentDoc[ctx.params.deploymentId]
+  } catch (err) {
+    ctx.throw(
+      500,
+      `Error fetching data for deployment ${ctx.params.deploymentId}`
+    )
+  }
+}
+
+export const publishApp = async function (ctx: any) {
+  let deployment = new Deployment()
+  console.log("Deployment object created")
+  deployment.setStatus(DeploymentStatus.PENDING)
+  console.log("Deployment object set to pending")
+  deployment = await storeDeploymentHistory(deployment)
+  console.log("Stored deployment history")
+
+  console.log("Deploying app...")
+
+  let app
   let replication
   try {
-    const appId = getAppId()
-    const devAppId = getDevelopmentAppID(appId)
-    const productionAppId = getProdAppID(appId)
+    const appId = context.getAppId()!
+    const devAppId = dbCore.getDevelopmentAppID(appId)
+    const productionAppId = dbCore.getProdAppID(appId)
 
+    // don't try this if feature isn't allowed, will error
+    if (await backups.isEnabled()) {
+      // trigger backup initially
+      await backups.triggerAppBackup(
+        productionAppId,
+        AppBackupTrigger.PUBLISH,
+        {
+          createdBy: ctx.user._id,
+        }
+      )
+    }
     const config: any = {
       source: devAppId,
       target: productionAppId,
     }
-    replication = new Replication(config)
-
+    replication = new dbCore.Replication(config)
+    const devDb = context.getDevAppDB()
+    console.log("Compacting development DB")
+    await devDb.compact()
     console.log("Replication object created")
-    await replication.replicate()
+    await replication.replicate(replication.appReplicateOpts())
     console.log("replication complete.. replacing app meta doc")
-    const db = getProdAppDB()
-    const appDoc = await db.get(DocumentTypes.APP_METADATA)
+    // app metadata is excluded as it is likely to be in conflict
+    // replicate the app metadata document manually
+    const db = context.getProdAppDB()
+    const appDoc = await devDb.get<App>(DocumentType.APP_METADATA)
+    try {
+      const prodAppDoc = await db.get<App>(DocumentType.APP_METADATA)
+      appDoc._rev = prodAppDoc._rev
+    } catch (err) {
+      delete appDoc._rev
+    }
 
+    // switch to production app ID
     deployment.appUrl = appDoc.url
-
     appDoc.appId = productionAppId
     appDoc.instance._id = productionAppId
+    // remove automation errors if they exist
+    delete appDoc.automationErrors
     await db.put(appDoc)
-    await appCache.invalidateAppMetadata(productionAppId)
+    await cache.app.invalidateAppMetadata(productionAppId)
     console.log("New app doc written successfully.")
     await initDeployedApp(productionAppId)
     console.log("Deployed app initialised, setting deployment to successful")
     deployment.setStatus(DeploymentStatus.SUCCESS)
     await storeDeploymentHistory(deployment)
-    return appDoc
+    app = appDoc
   } catch (err: any) {
     deployment.setStatus(DeploymentStatus.FAILURE, err.message)
     await storeDeploymentHistory(deployment)
@@ -141,67 +200,8 @@ async function deployApp(deployment: any) {
       await replication.close()
     }
   }
-}
-
-export async function fetchDeployments(ctx: any) {
-  try {
-    const db = getAppDB()
-    const deploymentDoc = await db.get(DocumentTypes.DEPLOYMENTS)
-    const { updated, deployments } = await checkAllDeployments(deploymentDoc)
-    if (updated) {
-      await db.put(deployments)
-    }
-    ctx.body = Object.values(deployments.history).reverse()
-  } catch (err) {
-    ctx.body = []
-  }
-}
-
-export async function deploymentProgress(ctx: any) {
-  try {
-    const db = getAppDB()
-    const deploymentDoc = await db.get(DocumentTypes.DEPLOYMENTS)
-    ctx.body = deploymentDoc[ctx.params.deploymentId]
-  } catch (err) {
-    ctx.throw(
-      500,
-      `Error fetching data for deployment ${ctx.params.deploymentId}`
-    )
-  }
-}
-
-const isFirstDeploy = async () => {
-  try {
-    const db = getProdAppDB()
-    await db.get(DocumentTypes.APP_METADATA)
-  } catch (e: any) {
-    if (e.status === 404) {
-      return true
-    }
-    throw e
-  }
-  return false
-}
-
-const _deployApp = async function (ctx: any) {
-  let deployment = new Deployment()
-  console.log("Deployment object created")
-  deployment.setStatus(DeploymentStatus.PENDING)
-  console.log("Deployment object set to pending")
-  deployment = await storeDeploymentHistory(deployment)
-  console.log("Stored deployment history")
-
-  console.log("Deploying app...")
-
-  let app
-  if (await isFirstDeploy()) {
-    app = await quotas.addPublishedApp(() => deployApp(deployment))
-  } else {
-    app = await deployApp(deployment)
-  }
 
   await events.app.published(app)
   ctx.body = deployment
+  builderSocket?.emitAppPublish(ctx)
 }
-
-export { _deployApp as deployApp }

@@ -1,19 +1,40 @@
+import { PaginationResponse } from "../../api"
 import { Document } from "../document"
-import { User } from "./user"
+
 export interface UserGroup extends Document {
   name: string
   icon: string
   color: string
-  users: groupUser[]
-  apps: string[]
-  roles: UserGroupRoles
+  users?: GroupUser[]
+  roles?: UserGroupRoles
+  // same structure as users
+  builder?: {
+    apps: string[]
+  }
   createdAt?: number
+  scimInfo?: {
+    externalId: string
+    isSync: boolean
+  }
 }
 
-export interface groupUser {
+export interface GroupUser {
   _id: string
-  email: string[]
+  email: string
 }
+
 export interface UserGroupRoles {
   [key: string]: string
+}
+
+export interface SearchGroupRequest {}
+export interface SearchGroupResponse {
+  data: UserGroup[]
+}
+
+export interface SearchUserGroupResponse extends PaginationResponse {
+  users: {
+    _id: any
+    email: any
+  }[]
 }

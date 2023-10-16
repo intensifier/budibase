@@ -14,7 +14,6 @@
   export let disabled = false
   export let readonly = false
   export let error = null
-  export let updateOnChange = true
   export let getSecondaryOptionLabel = option =>
     extractProperty(option, "label")
   export let getSecondaryOptionValue = option =>
@@ -22,7 +21,6 @@
   export let getSecondaryOptionColour = () => {}
   export let getSecondaryOptionIcon = () => {}
   export let quiet = false
-  export let dataCy
   export let autofocus
   export let primaryOptions = []
   export let secondaryOptions = []
@@ -99,8 +97,6 @@
   <PickerDropdown
     {searchTerm}
     {autocomplete}
-    {dataCy}
-    {updateOnChange}
     {error}
     {disabled}
     {readonly}
@@ -130,5 +126,6 @@
     on:blur
     on:focus
     on:keyup
+    on:closed
   />
 </Field>

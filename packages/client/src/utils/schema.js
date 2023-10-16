@@ -6,6 +6,7 @@ import RelationshipFetch from "@budibase/frontend-core/src/fetch/RelationshipFet
 import NestedProviderFetch from "@budibase/frontend-core/src/fetch/NestedProviderFetch.js"
 import FieldFetch from "@budibase/frontend-core/src/fetch/FieldFetch.js"
 import JSONArrayFetch from "@budibase/frontend-core/src/fetch/JSONArrayFetch.js"
+import ViewV2Fetch from "@budibase/frontend-core/src/fetch/ViewV2Fetch.js"
 
 /**
  * Fetches the schema of any kind of datasource.
@@ -16,11 +17,12 @@ import JSONArrayFetch from "@budibase/frontend-core/src/fetch/JSONArrayFetch.js"
  */
 export const fetchDatasourceSchema = async (
   datasource,
-  options = { enrichRelationships: false }
+  options = { enrichRelationships: false, formSchema: false }
 ) => {
   const handler = {
     table: TableFetch,
     view: ViewFetch,
+    viewV2: ViewV2Fetch,
     query: QueryFetch,
     link: RelationshipFetch,
     provider: NestedProviderFetch,
@@ -34,9 +36,28 @@ export const fetchDatasourceSchema = async (
 
   // Get the datasource definition and then schema
   const definition = await instance.getDefinition(datasource)
-  let schema = instance.getSchema(datasource, definition)
+
+  // Get the normal schema as long as we aren't wanting a form schema
+  let schema
+  if (datasource?.type !== "query" || !options?.formSchema) {
+    schema = instance.getSchema(datasource, definition)
+  } else if (definition.parameters?.length) {
+    schema = {}
+    definition.parameters.forEach(param => {
+      schema[param.name] = { ...param, type: "string" }
+    })
+  }
   if (!schema) {
     return null
+  }
+
+  // Strip hidden fields from views
+  if (datasource.type === "viewV2") {
+    Object.keys(schema).forEach(field => {
+      if (!schema[field].visible) {
+        delete schema[field]
+      }
+    })
   }
 
   // Enrich schema with relationships if required
@@ -71,6 +92,7 @@ export const getRelationshipSchemaAdditions = async schema => {
       Object.keys(linkSchema || {}).forEach(linkKey => {
         relationshipAdditions[`${fieldKey}.${linkKey}`] = {
           type: linkSchema[linkKey].type,
+          externalType: linkSchema[linkKey].externalType,
         }
       })
     }

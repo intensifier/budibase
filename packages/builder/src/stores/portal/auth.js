@@ -2,51 +2,26 @@ import { derived, writable, get } from "svelte/store"
 import { API } from "api"
 import { admin } from "stores/portal"
 import analytics from "analytics"
-import { FEATURE_FLAGS } from "helpers/featureFlags"
-import { Constants } from "@budibase/frontend-core"
+import { sdk } from "@budibase/shared-core"
 
 export function createAuthStore() {
   const auth = writable({
     user: null,
+    accountPortalAccess: false,
     tenantId: "default",
     tenantSet: false,
     loaded: false,
     postLogout: false,
-    groupsEnabled: false,
   })
   const store = derived(auth, $store => {
-    let initials = null
-    let isAdmin = false
-    let isBuilder = false
-    let groupsEnabled = false
-    if ($store.user) {
-      const user = $store.user
-      if (user.firstName) {
-        initials = user.firstName[0]
-        if (user.lastName) {
-          initials += user.lastName[0]
-        }
-      } else if (user.email) {
-        initials = user.email[0]
-      } else {
-        initials = "Unknown"
-      }
-      isAdmin = !!user.admin?.global
-      isBuilder = !!user.builder?.global
-      groupsEnabled =
-        user?.license.features.includes(Constants.Features.USER_GROUPS) &&
-        user?.featureFlags.includes(FEATURE_FLAGS.USER_GROUPS)
-    }
     return {
       user: $store.user,
+      accountPortalAccess: $store.accountPortalAccess,
       tenantId: $store.tenantId,
       tenantSet: $store.tenantSet,
       loaded: $store.loaded,
       postLogout: $store.postLogout,
-      initials,
-      isAdmin,
-      isBuilder,
-      groupsEnabled,
+      isSSO: !!$store.user?.provider,
     }
   })
 
@@ -54,6 +29,7 @@ export function createAuthStore() {
     auth.update(store => {
       store.loaded = true
       store.user = user
+      store.accountPortalAccess = user?.accountPortalAccess
       if (user) {
         store.tenantId = user.tenantId || "default"
         store.tenantSet = true
@@ -73,8 +49,8 @@ export function createAuthStore() {
               name: user.account?.name,
               user_id: user._id,
               tenant: user.tenantId,
-              admin: user?.admin?.global,
-              builder: user?.builder?.global,
+              admin: sdk.users.isAdmin(user),
+              builder: sdk.users.isBuilder(user),
               "Company size": user.account?.size,
               "Job role": user.account?.profession,
             },
@@ -139,11 +115,6 @@ export function createAuthStore() {
       await setOrganisation(tenantId)
     },
     getSelf: async () => {
-      // for analytics, we need to make sure the environment has been loaded
-      // before setting the user
-      if (!get(admin).loaded) {
-        await admin.init()
-      }
       // We need to catch this locally as we never want this to fail, even
       // though normally we never want to swallow API errors at the store level.
       // We're either logged in or we aren't.
@@ -165,15 +136,20 @@ export function createAuthStore() {
       await actions.getSelf()
     },
     logout: async () => {
-      setUser(null)
-      setPostLogout()
       await API.logOut()
+      setPostLogout()
+      setUser(null)
       await setInitInfo({})
     },
     updateSelf: async fields => {
-      const newUser = { ...get(auth).user, ...fields }
-      await API.updateSelf(newUser)
-      setUser(newUser)
+      await API.updateSelf({ ...fields })
+      // Refetch to enrich after update.
+      try {
+        const user = await API.fetchBuilderSelf()
+        setUser(user)
+      } catch (error) {
+        setUser(null)
+      }
     },
     forgotPassword: async email => {
       const tenantId = get(store).tenantId

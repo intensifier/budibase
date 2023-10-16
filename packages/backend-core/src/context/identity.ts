@@ -2,31 +2,39 @@ import {
   IdentityContext,
   IdentityType,
   User,
-  UserContext,
   isCloudAccount,
   Account,
   AccountUserContext,
+  UserContext,
+  Ctx,
 } from "@budibase/types"
 import * as context from "."
 
-export const getIdentity = (): IdentityContext | undefined => {
+export function getIdentity(): IdentityContext | undefined {
   return context.getIdentity()
 }
 
-export const doInIdentityContext = (identity: IdentityContext, task: any) => {
+export function doInIdentityContext(identity: IdentityContext, task: any) {
   return context.doInIdentityContext(identity, task)
 }
 
-export const doInUserContext = (user: User, task: any) => {
+// used in server/worker
+export function doInUserContext(user: User, ctx: Ctx, task: any) {
   const userContext: UserContext = {
     ...user,
     _id: user._id as string,
     type: IdentityType.USER,
+    hostInfo: {
+      ipAddress: ctx.request.ip,
+      // filled in by koa-useragent package
+      userAgent: ctx.userAgent._agent.source,
+    },
   }
   return doInIdentityContext(userContext, task)
 }
 
-export const doInAccountContext = (account: Account, task: any) => {
+// used in account portal
+export function doInAccountContext(account: Account, task: any) {
   const _id = getAccountUserId(account)
   const tenantId = account.tenantId
   const accountContext: AccountUserContext = {
@@ -38,12 +46,12 @@ export const doInAccountContext = (account: Account, task: any) => {
   return doInIdentityContext(accountContext, task)
 }
 
-export const getAccountUserId = (account: Account) => {
+export function getAccountUserId(account: Account) {
   let userId: string
   if (isCloudAccount(account)) {
     userId = account.budibaseUserId
   } else {
-    // use account id as user id for self hosting
+    // use account id as user id for self-hosting
     userId = account.accountId
   }
   return userId

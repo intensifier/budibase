@@ -1,99 +1,122 @@
-import { Integration, QueryTypes, SqlQuery } from "../definitions/datasource"
+import {
+  ConnectionInfo,
+  DatasourceFeature,
+  DatasourceFieldType,
+  Integration,
+  QueryType,
+  SqlQuery,
+} from "@budibase/types"
 import { Snowflake } from "snowflake-promise"
 
-module SnowflakeModule {
-  interface SnowflakeConfig {
-    account: string
-    username: string
-    password: string
-    warehouse: string
-    database: string
-    schema: string
+interface SnowflakeConfig {
+  account: string
+  username: string
+  password: string
+  warehouse: string
+  database: string
+  schema: string
+}
+
+const SCHEMA: Integration = {
+  docs: "https://developers.snowflake.com/",
+  description:
+    "Snowflake is a solution for data warehousing, data lakes, data engineering, data science, data application development, and securely sharing and consuming shared data.",
+  friendlyName: "Snowflake",
+  type: "Relational",
+  features: {
+    [DatasourceFeature.CONNECTION_CHECKING]: true,
+  },
+  datasource: {
+    account: {
+      type: DatasourceFieldType.STRING,
+      required: true,
+    },
+    username: {
+      type: DatasourceFieldType.STRING,
+      required: true,
+    },
+    password: {
+      type: DatasourceFieldType.PASSWORD,
+      required: true,
+    },
+    role: {
+      type: DatasourceFieldType.STRING,
+    },
+    warehouse: {
+      type: DatasourceFieldType.STRING,
+      required: true,
+    },
+    database: {
+      type: DatasourceFieldType.STRING,
+      required: true,
+    },
+    schema: {
+      type: DatasourceFieldType.STRING,
+      required: true,
+    },
+  },
+  query: {
+    create: {
+      type: QueryType.SQL,
+    },
+    read: {
+      type: QueryType.SQL,
+    },
+    update: {
+      type: QueryType.SQL,
+    },
+    delete: {
+      type: QueryType.SQL,
+    },
+  },
+}
+
+class SnowflakeIntegration {
+  private client: Snowflake
+
+  constructor(config: SnowflakeConfig) {
+    this.client = new Snowflake(config)
   }
 
-  const SCHEMA: Integration = {
-    docs: "https://developers.snowflake.com/",
-    description:
-      "Snowflake is a solution for data warehousing, data lakes, data engineering, data science, data application development, and securely sharing and consuming shared data.",
-    friendlyName: "Snowflake",
-    type: "Relational",
-    datasource: {
-      account: {
-        type: "string",
-        required: true,
-      },
-      username: {
-        type: "string",
-        required: true,
-      },
-      password: {
-        type: "password",
-        required: true,
-      },
-      warehouse: {
-        type: "string",
-        required: true,
-      },
-      database: {
-        type: "string",
-        required: true,
-      },
-      schema: {
-        type: "string",
-        required: true,
-      },
-    },
-    query: {
-      create: {
-        type: QueryTypes.SQL,
-      },
-      read: {
-        type: QueryTypes.SQL,
-      },
-      update: {
-        type: QueryTypes.SQL,
-      },
-      delete: {
-        type: QueryTypes.SQL,
-      },
-    },
-  }
-
-  class SnowflakeIntegration {
-    private client: Snowflake
-
-    constructor(config: SnowflakeConfig) {
-      this.client = new Snowflake(config)
-    }
-
-    async internalQuery(query: SqlQuery) {
+  async testConnection(): Promise<ConnectionInfo> {
+    try {
       await this.client.connect()
-      try {
-        return await this.client.execute(query.sql)
-      } catch (err: any) {
-        throw err?.message.split(":")[1] || err?.message
+      return { connected: true }
+    } catch (e: any) {
+      return {
+        connected: false,
+        error: e.message as string,
       }
     }
+  }
 
-    async create(query: SqlQuery) {
-      return this.internalQuery(query)
-    }
-
-    async read(query: SqlQuery) {
-      return this.internalQuery(query)
-    }
-
-    async update(query: SqlQuery) {
-      return this.internalQuery(query)
-    }
-
-    async delete(query: SqlQuery) {
-      return this.internalQuery(query)
+  async internalQuery(query: SqlQuery) {
+    await this.client.connect()
+    try {
+      return await this.client.execute(query.sql)
+    } catch (err: any) {
+      throw err?.message.split(":")[1] || err?.message
     }
   }
 
-  module.exports = {
-    schema: SCHEMA,
-    integration: SnowflakeIntegration,
+  async create(query: SqlQuery) {
+    return this.internalQuery(query)
   }
+
+  async read(query: SqlQuery) {
+    return this.internalQuery(query)
+  }
+
+  async update(query: SqlQuery) {
+    return this.internalQuery(query)
+  }
+
+  async delete(query: SqlQuery) {
+    return this.internalQuery(query)
+  }
+}
+
+export default {
+  schema: SCHEMA,
+  integration: SnowflakeIntegration,
 }
